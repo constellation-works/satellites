@@ -1,7 +1,7 @@
 # satellites — agent guide
 
 Loaded as both `AGENTS.md` and `CLAUDE.md` (a symlink). satellites holds general-purpose Rust
-crates spun out of Orbit and other constellation-works tools, published for anyone to use.
+crates, published for anyone to use.
 
 ## Rules
 
@@ -10,15 +10,13 @@ crates spun out of Orbit and other constellation-works tools, published for anyo
 - A crate here must not depend on any Orbit (`orbit-*`) or other constellation-internal crate.
   Code that only makes sense inside Orbit stays in Orbit; Orbit adapts its own types onto
   these crates.
-- Every crate is public API with semver: document every public item (`missing_docs` is
-  denied), ship a README and at least one example, and treat any change to a public type or
-  behavior as a contract change.
-- New crate: `crates/<name>/`, `[lints] workspace = true`, inherit `[workspace.package]`, add a
+- Every crate is public API with semver: document every public item, ship a README and at
+  least one example, and treat any change to a public type or behavior as a contract change.
+- New crate: `crates/<name>/`, `[lints] workspace = true`, inherit `[workspace.package]`
+  ([STD-02](docs/standards/STD-02-rust-architecture-and-errors/STD-02.md) §R9, §R22), add a
   row to the README's Crates table in the same change.
-- Update affected docs in the same change as the code.
-- A fix comes with a regression test through the public API, seen failing before the fix.
-- Tests never touch real host state: temp roots only.
-- Report commands and outcomes at handoff — passed, failed, not run — never "tested".
+- Update affected docs in the same change as the code. Edit this file only when a rule, a
+  command or a pointer in it changes; describing a feature goes in that feature's docs.
 
 ## Branching
 
@@ -26,8 +24,14 @@ crates spun out of Orbit and other constellation-works tools, published for anyo
 
 ## Gates
 
-`make ci-fast` (fmt, standards-check) and `make ci-lint` must pass before a task moves to
-review. `make ci` (everything, including tests and doctests) runs in CI on Linux and macOS.
+- `make ci-fast` and `make ci-lint` must pass before a task moves to review.
+- `make ci` runs in CI on Linux and macOS.
+
+## Tests
+
+- Regression tests through the public API, and the command outcomes a handoff lists:
+  [STD-04](docs/standards/STD-04-testing-and-verification/STD-04.md) §R1, §R2, §R16.
+- Host state in tests: [STD-03](docs/standards/STD-03-concurrency-and-process-safety/STD-03.md) §R20.
 
 <!-- constellation-standards:begin -->
 <!-- Managed by the constellation's operations/scripts/sync-standards.sh; edits inside this block are overwritten. -->
