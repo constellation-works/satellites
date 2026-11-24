@@ -88,6 +88,10 @@ impl Logging {
     /// in place. Never fails.
     pub fn init(self) {
         if let Some(warning) = &self.warning {
+            // The one write here that bypasses tracing and the sink, by
+            // design: no subscriber exists yet to carry it, and the sink is
+            // built later, from flags parsed after logging starts. It goes to
+            // stderr, never stdout, and is best effort.
             use std::io::Write as _;
             let _ = writeln!(io::stderr(), "warning: {warning}");
         }

@@ -79,8 +79,10 @@ ExitCode::from(exit)
 `Logging::from_env(&env, app)` reads `<APP>_LOG` from the snapshot as a `tracing` filter
 (`info`, `notes=debug`). Unset or empty means `warn`. A value that does not parse never
 fails the command: the level stays `warn` and `warning()` says why; `init()` prints that
-warning and installs the subscriber on stderr. `subscriber(writer)` builds the same
-subscriber on another writer, for a test.
+warning and installs the subscriber on stderr. That warning is the one line the crate
+writes to stderr directly rather than through tracing or a `Sink`: no subscriber exists yet
+to carry it, and the sink is built later, from flags parsed after logging starts.
+`subscriber(writer)` builds the same subscriber on another writer, for a test.
 
 ## Help
 
