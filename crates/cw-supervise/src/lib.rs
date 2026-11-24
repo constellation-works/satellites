@@ -69,10 +69,15 @@
 //! - The grace after `SIGTERM` ends as soon as the leader exits, as the
 //!   design decided: a descendant still shutting down then gets `SIGKILL`
 //!   before the rest of the grace. This is deliberate.
-//! - When cleanup fails or cannot be verified (the group cannot be signalled,
+//! - When cleanup fails or cannot be verified (the group signal is refused,
 //!   or the leader is still alive 2 s after its own `SIGKILL`), the run still
 //!   returns, with [`Outcome::swept`] `false`, instead of waiting without
-//!   bound.
+//!   bound. A leader left unreaped that way stays a zombie once it exits,
+//!   until the calling process exits. On macOS `swept` is also `false` when
+//!   the leader exited before the sweep: the kernel refuses a signal to a
+//!   group of zombies with the error it uses for a member it may not signal.
+//! - A deadline or grace longer than about ten years is treated as ten
+//!   years, so every run reaches `SIGKILL`.
 //!
 //! # Preconditions
 //!

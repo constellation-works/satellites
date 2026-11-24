@@ -71,25 +71,18 @@ impl Group {
         }
     }
 
-    /// Wait until the leader exits (true) or `until` passes (false). `None`
-    /// waits without a bound of its own.
-    pub(super) fn wait_for_leader(&mut self, until: Option<Instant>) -> bool {
+    /// Wait until the leader exits (true) or `until` passes (false).
+    pub(super) fn wait_for_leader(&mut self, until: Instant) -> bool {
         let mut poll = POLL_MIN;
         loop {
             if self.leader_exited() {
                 return true;
             }
-            let wait = match until {
-                Some(until) => {
-                    let now = Instant::now();
-                    if now >= until {
-                        return false;
-                    }
-                    poll.min(until - now)
-                }
-                None => poll,
-            };
-            thread::sleep(wait);
+            let now = Instant::now();
+            if now >= until {
+                return false;
+            }
+            thread::sleep(poll.min(until - now));
             poll = (poll * 2).min(POLL_MAX);
         }
     }
@@ -110,16 +103,16 @@ impl Group {
     /// while it is unreaped), in case it left the group. Then reap the
     /// leader, waiting at most [`REAP_WAIT`]: a leader that is still alive
     /// then (this process may not signal it) is left unreaped rather than
-    /// waited for without bound. `None` when an earlier call took it.
+    /// waited for without bound, and stays a zombie once it exits, until the
+    /// calling process exits. `None` when an earlier call took it.
     pub(super) fn reap(&mut self) -> Option<Reaped> {
         let leader_had_exited = self.leader_exited();
-        // A group whose only member is the exited, unreaped leader may
-        // refuse the signal (macOS answers EPERM): nothing was left to kill.
-        // While the leader was alive, a refusal means it left the group or
-        // may not be signalled, and the sweep is not verified.
+        // ESRCH once the leader has exited: nothing was left in the group.
+        // While the leader was alive, ESRCH means it left the group. EPERM
+        // never counts: a member this process may not signal may be alive.
         let group_killed = match self.signal(Signal::KILL) {
             Ok(()) => true,
-            Err(Errno::SRCH | Errno::PERM) => leader_had_exited,
+            Err(Errno::SRCH) => leader_had_exited,
             Err(_) => false,
         };
         if !self.reaped_elsewhere
@@ -127,7 +120,7 @@ impl Group {
         {
             let _ = kill_process(Pid::from_child(child), Signal::KILL);
         }
-        let exited = self.wait_for_leader(Some(Instant::now() + REAP_WAIT));
+        let exited = self.wait_for_leader(Instant::now() + REAP_WAIT);
         let mut child = self.child.take()?;
         if !exited {
             return Some(Reaped {

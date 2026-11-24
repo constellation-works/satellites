@@ -64,7 +64,10 @@ environment. The crate ships no list of names.
 - The grace after `SIGTERM` ends as soon as the leader exits, deliberately, as the design
   decided.
 - When cleanup fails or cannot be verified, the run returns with `Outcome::swept` false
-  rather than waiting without bound.
+  rather than waiting without bound; a leader left unreaped then stays a zombie until the
+  caller exits. On macOS `swept` is also false when the leader exited before the sweep
+  (the kernel refuses a signal to a group of zombies as it does one it may not send).
+- A deadline or grace longer than about ten years is treated as ten years.
 - Precondition: the calling process reaps its children only through this crate: no other
   waiter, and `SIGCHLD` is neither ignored nor set with `SA_NOCLDWAIT`.
 - Linux and macOS only. On any other platform every run returns `Error::Unsupported`; there

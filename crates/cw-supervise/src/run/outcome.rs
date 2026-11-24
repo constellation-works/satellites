@@ -16,13 +16,20 @@ pub struct Outcome {
     pub stderr: Captured,
     /// The final `SIGKILL` reached the group and the leader was reaped.
     ///
-    /// `false` when cleanup failed or could not be verified: the group could
-    /// not be signalled (the leader left it while alive, or this process may
-    /// not signal it), or the leader was still alive 2 s after its own
-    /// `SIGKILL` and is left unreaped rather than waited for without bound. `true` cannot vouch for a member this process may not
-    /// signal: the kernel reports a group signal as sent once any member got
-    /// it, and once the leader has exited a refused group signal is read as
-    /// "only the exited leader was left" (macOS refuses a group of zombies).
+    /// `false` when cleanup failed or could not be verified: the group
+    /// signal was refused (the leader left the group while alive, or a
+    /// member this process may not signal may be alive), or the leader was
+    /// still alive 2 s after its own `SIGKILL`. Such a leader is left
+    /// unreaped rather than waited for without bound, and stays a zombie
+    /// once it exits, until the calling process exits; only a leader this
+    /// process may not kill gets there.
+    ///
+    /// On macOS a group whose only member is the exited, unreaped leader
+    /// refuses a signal with the same error (`EPERM`) as one holding a member
+    /// this process may not signal, so a run whose leader exited before the
+    /// sweep reports `false` there even when nothing was left. `true` cannot
+    /// vouch for a member this process may not signal either: the kernel
+    /// reports a group signal as sent once any member got it.
     pub swept: bool,
 }
 

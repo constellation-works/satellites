@@ -12,6 +12,10 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// The longest deadline or grace a run honours: about ten years. A longer
+/// one, up to `Duration::MAX`, is treated as this.
+const LONGEST_WAIT: Duration = Duration::from_secs(10 * 365 * 24 * 60 * 60);
+
 /// How long the readers get after the sweep to reach end of file.
 const DRAIN_WAIT: Duration = Duration::from_secs(2);
 
@@ -73,13 +77,13 @@ pub(super) fn run(run: Run) -> Result<Outcome, Error> {
     };
     drop(overflow_tx);
 
-    // A deadline or grace too far to represent (`Duration::MAX`) is no
-    // bound at all, not a panic.
-    let watched = watch(&mut group, started.checked_add(deadline), &overflow);
+    // A deadline or grace too far to represent (`Duration::MAX`) saturates
+    // to a finite bound, so the run always reaches SIGKILL and never panics.
+    let watched = watch(&mut group, after(started, deadline), &overflow);
     if watched == Watched::TimedOut {
         // A failure here is met by the SIGKILL and the reap that follow.
         let _ = group.signal(Signal::TERM);
-        group.wait_for_leader(Instant::now().checked_add(grace));
+        group.wait_for_leader(after(Instant::now(), grace));
     }
     let reaped = group.reap();
     let swept = reaped.as_ref().is_some_and(|reaped| reaped.swept);
@@ -151,8 +155,7 @@ fn start_io(
 
 /// Watch until the leader exits, the deadline passes, or a stream passes a
 /// kill cap, whichever comes first.
-/// `None` is a deadline too far away to represent.
-fn watch(group: &mut Group, deadline: Option<Instant>, overflow: &Receiver<()>) -> Watched {
+fn watch(group: &mut Group, deadline: Instant, overflow: &Receiver<()>) -> Watched {
     let mut poll = POLL_MIN;
     loop {
         if overflow.try_recv().is_ok() {
@@ -161,16 +164,11 @@ fn watch(group: &mut Group, deadline: Option<Instant>, overflow: &Receiver<()>) 
         if group.leader_exited() {
             return Watched::Exited;
         }
-        let wait = match deadline {
-            Some(deadline) => {
-                let now = Instant::now();
-                if now >= deadline {
-                    return Watched::TimedOut;
-                }
-                poll.min(deadline - now)
-            }
-            None => poll,
-        };
+        let now = Instant::now();
+        if now >= deadline {
+            return Watched::TimedOut;
+        }
+        let wait = poll.min(deadline - now);
         match overflow.recv_timeout(wait) {
             Ok(()) => return Watched::OutputLimit,
             Err(RecvTimeoutError::Timeout) => {}
@@ -179,6 +177,12 @@ fn watch(group: &mut Group, deadline: Option<Instant>, overflow: &Receiver<()>) 
         }
         poll = (poll * 2).min(POLL_MAX);
     }
+}
+
+/// `from + wait`, with `wait` saturated to [`LONGEST_WAIT`] so the sum is
+/// always representable.
+fn after(from: Instant, wait: Duration) -> Instant {
+    from.checked_add(wait.min(LONGEST_WAIT)).unwrap_or(from)
 }
 
 /// A stream that was not captured on a pipe of its own: nothing, and nothing

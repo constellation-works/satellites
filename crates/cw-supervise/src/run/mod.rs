@@ -127,7 +127,8 @@ impl Run {
 
     /// How long the group has between `SIGTERM` and `SIGKILL` once the
     /// deadline has passed. The wait ends early when the leader exits;
-    /// `SIGKILL` follows either way.
+    /// `SIGKILL` follows either way. A grace, like a deadline, longer than
+    /// about ten years is treated as ten years.
     pub fn grace(mut self, grace: Duration) -> Self {
         self.grace = grace;
         self
@@ -138,9 +139,12 @@ impl Run {
     ///
     /// # Errors
     ///
-    /// [`Error::Spawn`] when the child cannot be started, keeping the program
-    /// and the operating-system error; [`Error::Unsupported`] on a platform
-    /// other than Linux and macOS.
+    /// [`Error::Spawn`], keeping the program and the operating-system error,
+    /// when the child cannot be started; when it started but its supervision
+    /// could not be set up (the OS could not create a reader or writer
+    /// thread), after the group has been swept; or when its exit status
+    /// could not be collected because it was reaped elsewhere.
+    /// [`Error::Unsupported`] on a platform other than Linux and macOS.
     pub fn run(self) -> Result<Outcome, Error> {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {

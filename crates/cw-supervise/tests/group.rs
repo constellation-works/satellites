@@ -147,15 +147,17 @@ fn a_pipe_held_outside_the_group_is_incomplete_with_the_real_status() -> TestRes
 
 #[test]
 fn a_leader_the_group_signal_cannot_reach_is_reported_unswept() -> TestResult {
-    let mut reaper = Reaper::default();
     // The leader moves itself into this test process's group, so its own
     // group is empty and the group signals fail. The run must still end,
-    // bounded, and say the cleanup was not verified.
+    // bounded, and say the cleanup was not verified. The run kills and reaps
+    // the leader by its id, so the test registers no pid to kill later: it
+    // may since have been reused. If the run fails, the leader's own short
+    // sleep bounds it.
     let script = r#"
         setpgrp(0, getpgrp(getppid())) or die "setpgrp: $!";
         $| = 1;
         print "$$\n";
-        sleep 30;
+        sleep 10;
     "#;
     let mut command = Command::new("perl");
     command.arg("-e").arg(script);
@@ -165,9 +167,6 @@ fn a_leader_the_group_signal_cannot_reach_is_reported_unswept() -> TestResult {
         .run()?;
     let elapsed = started.elapsed();
     let ids = pids(&outcome.stdout.bytes);
-    for &pid in &ids {
-        reaper.pid(pid);
-    }
 
     assert!(matches!(outcome.end, End::TimedOut), "{outcome:?}");
     assert_eq!(ids.len(), 1, "the leader's pid: {outcome:?}");

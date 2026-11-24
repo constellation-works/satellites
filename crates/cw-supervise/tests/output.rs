@@ -127,8 +127,8 @@ fn input_larger_than_a_pipe_buffer_is_delivered() -> TestResult {
 }
 
 #[test]
-fn durations_too_large_to_add_are_no_bound_rather_than_a_panic() -> TestResult {
-    // A deadline of Duration::MAX never passes: the child exits on its own.
+fn durations_too_large_to_add_saturate_rather_than_panic() -> TestResult {
+    // A deadline of Duration::MAX saturates far away: the child exits first.
     let exits = Run::new(sh("exit 0", &[]), Duration::MAX)
         .grace(Duration::MAX)
         .run()?;
@@ -141,7 +141,6 @@ fn durations_too_large_to_add_are_no_bound_rather_than_a_panic() -> TestResult {
         .grace(Duration::MAX)
         .run()?;
     assert!(matches!(stopped.end, End::TimedOut), "{stopped:?}");
-    assert!(stopped.swept, "{stopped:?}");
     assert!(
         started.elapsed() < Duration::from_secs(5),
         "the grace ended"
