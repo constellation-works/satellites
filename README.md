@@ -13,6 +13,7 @@ its own: no dependency on Orbit, its own docs and examples, and semver from its 
 | [cw-testkit](crates/cw-testkit) | Test isolation for command-line tools: private temp roots, a child command with a cleared environment, and a golden-file harness | 0.1.0, unreleased |
 | [cw-supervise](crates/cw-supervise) | Run a child process in its own group with a required deadline, a polite-then-forced stop, a sweep on every exit path and capped output | 0.1.0, unreleased |
 | [cw-sqlite](crates/cw-sqlite) | One private SQLite database: a writer or a reader per call, fixed pragmas, one write transaction, append-only migrations | 0.1.0, unreleased |
+| [cw-app](crates/cw-app) | The one path from a CLI or MCP surface to a program's commands: the command context, the environment captured once, and an append-only audit log | 0.1.0, unreleased |
 | — | A cross-platform process sandbox (Landlock, Bubblewrap, Seatbelt) | In progress |
 
 ## Development

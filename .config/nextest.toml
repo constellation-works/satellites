@@ -24,3 +24,9 @@ slow-timeout = { period = "15s", terminate-after = 2 }
 filter = "package(cw-sqlite) & binary(transaction)"
 threads-required = "num-test-threads"
 slow-timeout = { period = "15s", terminate-after = 2 }
+
+# The audit test that waits on a held lock measures wall-clock time too.
+[[profile.default.overrides]]
+filter = "package(cw-app) & binary(busy)"
+threads-required = "num-test-threads"
+slow-timeout = { period = "15s", terminate-after = 2 }

@@ -1,0 +1,250 @@
+//! The chokepoint: what one command leaves in the audit log, and how its
+//! error and its audit failure reach the caller.
+
+use cw_app::{App, AuditLog, AuditMeta, Ctx, Origin, Runtime, Status, Surface, exec};
+use cw_base::{Clock, Error, Kind};
+use cw_fs::Cap;
+
+type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+const SECRET_ARG: &str = "argument-value-never-logged";
+const SECRET_MESSAGE: &str = "error-message-never-logged";
+
+#[derive(Debug, thiserror::Error)]
+enum NotesError {
+    #[error("{SECRET_MESSAGE}: {0}")]
+    Missing(String),
+}
+
+impl From<NotesError> for Error {
+    fn from(error: NotesError) -> Self {
+        match &error {
+            NotesError::Missing(_) => Error::new(Kind::NotFound, "note_missing", error),
+        }
+    }
+}
+
+enum Command {
+    Add { body: String },
+    Remove { id: String },
+    Show,
+}
+
+struct Notes;
+
+impl App for Notes {
+    type State = ();
+    type Command = Command;
+    type Outcome = Option<String>;
+    type Error = NotesError;
+
+    fn audit(command: &Command) -> Option<AuditMeta> {
+        match command {
+            Command::Add { .. } => Some(AuditMeta::new("note add")),
+            Command::Remove { .. } => Some(AuditMeta::new("note remove")),
+            Command::Show => None,
+        }
+    }
+
+    fn run(_: &Ctx<'_, ()>, command: Command) -> Result<Option<String>, NotesError> {
+        match command {
+            Command::Add { body } => Ok(Some(format!("n-{}", body.len()))),
+            Command::Remove { id } => Err(NotesError::Missing(id)),
+            Command::Show => Ok(None),
+        }
+    }
+
+    fn target(outcome: &Option<String>) -> Option<String> {
+        outcome.clone()
+    }
+}
+
+/// A private data directory in a fresh scratch directory (the scratch
+/// directory itself is open to other users, which the audit log refuses).
+fn data_dir() -> std::io::Result<(tempfile::TempDir, std::path::PathBuf)> {
+    let scratch = tempfile::tempdir()?;
+    let root = scratch.path().join("data");
+    Ok((scratch, root))
+}
+
+fn origin() -> Origin {
+    Origin::new(Surface::MCP, Some("agent-7".to_owned()))
+}
+
+fn pinned() -> Result<Clock, cw_base::TimestampError> {
+    Ok(Clock::fixed(cw_base::time::parse_rfc3339(
+        "2026-11-24T09:30:00Z",
+    )?))
+}
+
+#[test]
+fn a_mutating_command_writes_one_line_of_identifiers_only() -> TestResult {
+    let (_scratch, root) = data_dir()?;
+    let runtime = Runtime::new(&root, ()).with_clock(pinned()?);
+
+    let finished = exec::<Notes>(
+        &runtime,
+        &origin(),
+        Command::Add {
+            body: SECRET_ARG.to_owned(),
+        },
+    );
+    let (result, warning) = finished.settle();
+    assert_eq!(result?.as_deref(), Some("n-27"));
+    assert!(warning.is_none());
+
+    let text = std::fs::read_to_string(runtime.audit_log().path())?;
+    assert_eq!(text.lines().count(), 1);
+    assert!(!text.contains(SECRET_ARG));
+    let lines = runtime.audit_log().read(Cap::bytes(1 << 16))?;
+    let [Ok(record)] = lines.as_slice() else {
+        panic!("one readable line expected, got {lines:?}");
+    };
+    assert_eq!(record.command, "note add");
+    assert_eq!(record.target.as_deref(), Some("n-27"));
+    assert_eq!(record.status, Status::Success);
+    assert_eq!(record.error_code, None);
+    assert_eq!(record.actor.as_deref(), Some("agent-7"));
+    assert_eq!(record.surface.as_deref(), Some("mcp"));
+    Ok(())
+}
+
+#[test]
+fn a_failed_command_logs_its_code_never_its_message_or_arguments() -> TestResult {
+    let (_scratch, root) = data_dir()?;
+    let runtime = Runtime::new(&root, ());
+
+    let finished = exec::<Notes>(
+        &runtime,
+        &origin(),
+        Command::Remove {
+            id: SECRET_ARG.to_owned(),
+        },
+    );
+    let (result, warning) = finished.settle();
+    assert!(result.is_err());
+    assert!(warning.is_none());
+
+    let text = std::fs::read_to_string(runtime.audit_log().path())?;
+    assert_eq!(text.lines().count(), 1);
+    assert!(!text.contains(SECRET_ARG));
+    assert!(!text.contains(SECRET_MESSAGE));
+    let lines = runtime.audit_log().read(Cap::bytes(1 << 16))?;
+    let [Ok(record)] = lines.as_slice() else {
+        panic!("one readable line expected, got {lines:?}");
+    };
+    assert_eq!(record.command, "note remove");
+    assert_eq!(record.status, Status::Failure);
+    assert_eq!(record.error_code.as_deref(), Some("note_missing"));
+    assert_eq!(record.target, None);
+    assert_eq!(record.actor.as_deref(), Some("agent-7"));
+    assert_eq!(record.surface.as_deref(), Some("mcp"));
+    Ok(())
+}
+
+#[test]
+fn a_read_only_command_creates_no_file_and_takes_no_lock() -> TestResult {
+    let scratch = tempfile::tempdir()?;
+    let root = scratch.path().join("data");
+    let runtime = Runtime::new(&root, ());
+
+    let finished = exec::<Notes>(&runtime, &origin(), Command::Show);
+    assert!(!finished.is_audited());
+    let (result, warning) = finished.settle();
+    assert!(result.is_ok());
+    assert!(warning.is_none());
+
+    // The data directory, the log and the audit lock file are all absent.
+    assert!(!root.exists());
+    assert!(!runtime.audit_log().path().exists());
+    assert!(!runtime.audit_log().lock_path().exists());
+    Ok(())
+}
+
+#[test]
+fn an_app_error_reaches_the_caller_with_its_kind_code_and_typed_cause() -> TestResult {
+    let (_scratch, root) = data_dir()?;
+    let runtime = Runtime::new(&root, ());
+
+    let (result, _) = exec::<Notes>(
+        &runtime,
+        &origin(),
+        Command::Remove {
+            id: "n-9".to_owned(),
+        },
+    )
+    .settle();
+    let Err(error) = result else {
+        return Err("the command was expected to fail".into());
+    };
+    assert_eq!(error.kind(), Kind::NotFound);
+    assert_eq!(error.code(), "note_missing");
+    assert!(matches!(
+        error.downcast_ref::<NotesError>(),
+        Some(NotesError::Missing(id)) if id == "n-9"
+    ));
+    Ok(())
+}
+
+#[test]
+fn a_failure_to_write_the_line_is_returned_as_a_warning() -> TestResult {
+    let (_scratch, root) = data_dir()?;
+    cw_fs::create_private_dir(&root)?;
+    // A directory where the log should be: the append is refused.
+    std::fs::create_dir(root.join(cw_app::audit::FILE))?;
+    let runtime = Runtime::new(&root, ());
+
+    let finished = exec::<Notes>(
+        &runtime,
+        &origin(),
+        Command::Add {
+            body: "x".to_owned(),
+        },
+    );
+    // The command's own result is untouched by the audit failure.
+    assert!(finished.result().is_ok());
+    let (result, warning) = finished.settle();
+    assert!(result.is_ok());
+    let Some(warning) = warning else {
+        return Err("the failed append was expected to come back as a warning".into());
+    };
+    assert_eq!(warning.command(), "note add");
+    assert_eq!(warning.error().kind(), Kind::Refused);
+    Ok(())
+}
+
+#[test]
+fn the_clock_and_actor_come_from_the_context() -> TestResult {
+    struct Stamp;
+    impl App for Stamp {
+        type State = ();
+        type Command = ();
+        type Outcome = (String, Option<String>);
+        type Error = NotesError;
+        fn audit((): &()) -> Option<AuditMeta> {
+            Some(AuditMeta::new("stamp"))
+        }
+        fn run(ctx: &Ctx<'_, ()>, (): ()) -> Result<Self::Outcome, NotesError> {
+            let at = cw_base::time::format_rfc3339(ctx.now()).unwrap_or_default();
+            Ok((at, ctx.actor().map(str::to_owned)))
+        }
+        fn target(_: &Self::Outcome) -> Option<String> {
+            None
+        }
+    }
+
+    let (_scratch, root) = data_dir()?;
+    let runtime = Runtime::new(&root, ()).with_clock(pinned()?);
+    let (result, warning) = exec::<Stamp>(&runtime, &origin(), ()).settle();
+    assert!(warning.is_none());
+    let (at, actor) = result?;
+    assert_eq!(at, "2026-11-24T09:30:00Z");
+    assert_eq!(actor.as_deref(), Some("agent-7"));
+
+    let lines = AuditLog::new(&root).read(Cap::bytes(1 << 16))?;
+    let [Ok(record)] = lines.as_slice() else {
+        panic!("one readable line expected, got {lines:?}");
+    };
+    assert_eq!(record.at, "2026-11-24T09:30:00Z");
+    Ok(())
+}

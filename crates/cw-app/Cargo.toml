@@ -1,0 +1,26 @@
+[package]
+name = "cw-app"
+version = "0.1.0"
+description = "The one path from a CLI or MCP surface to a program's commands: the context a command runs in, a captured environment, and an append-only audit log."
+readme = "README.md"
+keywords = ["cli", "audit-log", "environment", "chokepoint"]
+categories = ["command-line-interface"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# cw-app depends on cw-base and cw-fs only (scripts/check-dependency-direction.sh).
+[dependencies]
+cw-base.workspace = true
+cw-fs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
