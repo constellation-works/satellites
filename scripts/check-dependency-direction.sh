@@ -1,6 +1,7 @@
 #!/bin/sh
 # check-dependency-direction.sh — the kit crates depend on each other only as
-# the table below allows, and a crate names no module its row forbids.
+# the table below allows, a crate names no module its row forbids, and a crate
+# with a TERMINAL row asks about terminal state only in that one folder.
 #
 # Usage: sh scripts/check-dependency-direction.sh [repository-root]
 # Exit status: 0 = every edge allowed, 1 = a violation, 2 = cannot run.
@@ -23,6 +24,7 @@ cw-testkit:
 cw-supervise:
 cw-sqlite: cw-base cw-fs
 cw-app: cw-base cw-fs
+cw-cli: cw-base cw-app
 '
 
 # crate: the modules its sources must not name (space-separated). Found in a
@@ -33,6 +35,7 @@ cw-app: cw-base cw-fs
 FORBIDDEN='
 cw-base: std::fs std::env std::process
 cw-app: std::env
+cw-cli: std::env
 '
 
 # crate: the folders under its src/ that the FORBIDDEN search skips, the one
@@ -41,6 +44,18 @@ cw-app: std::env
 EXEMPT='
 cw-app: env
 '
+
+# crate: the one folder under its src/ that may ask what a stream is
+# attached to (a terminal test, a terminal size) or name the variables that
+# decide colour. A second place would make a second, disagreeing decision
+# (STD-01 R17), so any other file of the crate that does fails.
+# cw-cli decides once, in src/terminal/, and reads no variable itself.
+TERMINAL='
+cw-cli: terminal
+'
+# What counts as asking: the std and libc terminal tests, a terminal size or
+# termios query, the colour variables, and cw-app's readers of them.
+terminal_state='is_terminal|IsTerminal|isatty|tcgetwinsize|termios|NO_COLOR|CLICOLOR_FORCE|(^|[^A-Za-z0-9_])TERM([^A-Za-z0-9_]|$)|\.no_color ?\(|\.term ?\('
 
 root=${1:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)} || exit 2
 [ -f "$root/Cargo.toml" ] || { printf 'dependency direction: cannot run: no %s/Cargo.toml\n' "$root" >&2; exit 2; }
@@ -125,6 +140,18 @@ while IFS=$tab read -r crate dir deps; do
     # A statement can be long; its start is enough to find it.
     printf '%s\n' "$hits" | cut -c1-160 | sed 's/^/    /' >&2
   done
+  home=$(row "$TERMINAL" "$crate")
+  [ -n "$home" ] || continue
+  hits=$(find "$dir/src" -path "$dir/src/$home" -prune -o -name '*.rs' -print 2>/dev/null | LC_ALL=C sort |
+    while IFS= read -r file; do
+      statements "$file" | grep -E "$terminal_state" | sed 's/^ *//' |
+        while IFS= read -r statement; do
+          printf '%s: %s\n' "${file#"$dir"/}" "$statement"
+        done
+    done)
+  [ -n "$hits" ] || continue
+  fail "$crate asks about terminal state outside src/$home/:"
+  printf '%s\n' "$hits" | cut -c1-160 | sed 's/^/    /' >&2
 done
 exit "$status"
 } || status=1
