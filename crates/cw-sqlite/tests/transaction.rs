@@ -7,10 +7,11 @@
 
 use cw_base::Kind;
 use cw_sqlite::{Db, Error, Step};
-use std::io::{BufRead as _, BufReader, Write as _};
+use std::io::Write as _;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
+
+mod child;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 type Boxed = Box<dyn std::error::Error>;
@@ -81,8 +82,7 @@ fn child_holds_a_write_until_stdin_closes() -> TestResult {
         let mut out = std::io::stdout().lock();
         writeln!(out, "{READY}")?;
         out.flush()?;
-        let mut line = String::new();
-        while std::io::stdin().read_line(&mut line)? > 0 {}
+        child::until_stdin_closes()?;
         Err("released without committing".into())
     });
     assert!(held.is_err());
@@ -90,38 +90,19 @@ fn child_holds_a_write_until_stdin_closes() -> TestResult {
 }
 
 /// A child process holding a write transaction on the database at `path`;
-/// it rolls back and exits when its stdin is closed.
-fn hold_in_child(path: &Path) -> Result<Child, Boxed> {
-    let mut child = Command::new(std::env::current_exe()?)
-        .args([
-            "child_holds_a_write_until_stdin_closes",
-            "--exact",
-            "--ignored",
-            "--nocapture",
-            "--test-threads=1",
-        ])
-        .env(HOLD_ENV, path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()?;
-    let stdout = child.stdout.take().ok_or("no child stdout")?;
-    let mut lines = BufReader::new(stdout).lines();
-    loop {
-        let line = lines
-            .next()
-            .ok_or("the child exited before holding the write")??;
-        if line.contains(READY) {
-            // Keep reading, so the child's last lines meet an open pipe.
-            std::thread::spawn(move || lines.for_each(drop));
-            return Ok(child);
-        }
-    }
+/// it rolls back and exits when it is finished, and is killed if dropped.
+fn hold_in_child(path: &Path) -> Result<child::Owned, Boxed> {
+    let held = child::Owned::spawn(
+        "child_holds_a_write_until_stdin_closes",
+        &[(HOLD_ENV, path.as_os_str())],
+    )?;
+    held.wait_for(READY, Instant::now() + child::READY_WAIT)?;
+    Ok(held)
 }
 
-fn release(mut child: Child) -> TestResult {
-    drop(child.stdin.take());
-    let status = child.wait()?;
-    assert!(status.success(), "the child failed: {status}");
+fn release(held: child::Owned) -> TestResult {
+    let exited = held.finish(Instant::now() + child::READY_WAIT)?;
+    assert!(exited, "the child failed or did not exit");
     Ok(())
 }
 

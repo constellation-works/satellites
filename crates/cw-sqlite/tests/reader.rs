@@ -105,3 +105,30 @@ fn a_copy_with_no_wal_in_a_read_only_directory_is_read_as_immutable() -> TestRes
     assert!(!db.read()?.immutable());
     Ok(())
 }
+
+#[test]
+fn the_immutable_fallback_is_refused_when_the_wal_has_content() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let db = Db::new(root.path().join("store.db"), MIGRATIONS);
+    insert(&db, 1)?;
+
+    let copy_dir = root.path().join("copy");
+    std::fs::create_dir(&copy_dir)?;
+    std::fs::set_permissions(&copy_dir, std::fs::Permissions::from_mode(0o700))?;
+    let copy = Db::new(copy_dir.join("store.db"), MIGRATIONS);
+    let mut wal = db.path().as_os_str().to_os_string();
+    wal.push("-wal");
+    let mut copy_wal = copy.path().as_os_str().to_os_string();
+    copy_wal.push("-wal");
+    std::fs::copy(db.path(), copy.path())?;
+    std::fs::copy(&wal, &copy_wal)?;
+    assert!(std::fs::metadata(&copy_wal)?.len() > 0);
+    std::fs::set_permissions(&copy_dir, std::fs::Permissions::from_mode(0o500))?;
+    let _restore = Writable(&copy_dir);
+
+    match copy.read() {
+        Ok(reader) => assert!(!reader.immutable(), "the WAL's pages were ignored"),
+        Err(e) => assert!(!matches!(e, Error::Missing { .. }), "{e:?}"),
+    }
+    Ok(())
+}
