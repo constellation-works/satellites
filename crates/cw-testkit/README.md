@@ -17,7 +17,8 @@ machine it runs on. `cw-testkit` is a dev-dependency that gives each test:
   `redact_timestamps` replaces RFC 3339 timestamps with `<timestamp>` first, so the clock
   never makes a golden stale.
 
-The crate is synchronous and has no unsafe code.
+The crate is synchronous and has no unsafe code. It stands alone: it depends on no other kit
+crate, so its `thiserror` `Error` has no `kind()`; its errors only ever end a test.
 
 ## Usage
 
