@@ -31,7 +31,8 @@ cw_mcp::serve_stdio(ServerInfo::new("notes", "0.1.0", "notes_internal"), runtime
 - **The schema is the parse.** A tool's input schema is derived from the type its function
   receives, so the schema a client reads and the parse a call goes through cannot drift.
 - **The origin.** Each call's `Origin` names the `mcp` surface and the client's name from
-  its `initialize` handshake, which `cw_app` records as the actor of a mutating command.
+  its `initialize` handshake, exactly as sent; `cw_app`'s actor rule decides what an audit
+  line records of it.
 - **Standard output is the protocol.** A tool's function must not print to it.
 
 ## On the wire

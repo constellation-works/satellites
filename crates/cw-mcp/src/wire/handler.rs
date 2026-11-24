@@ -83,11 +83,12 @@ impl<S: Send + Sync + 'static> ServerHandler for Handler<S> {
                 None,
             )
         })?;
+        // The client's name exactly as it sent it: the audit layer's actor
+        // rule decides what of it is recorded.
         let client = context
             .peer
             .peer_info()
-            .map(|info| info.client_info.name.trim().to_owned())
-            .filter(|client| !client.is_empty());
+            .map(|info| info.client_info.name.clone());
         let origin = Origin::new(Surface::MCP, client);
         let shared = Arc::clone(&self.shared);
         let joined = tokio::task::spawn_blocking(move || call(&shared.runtime, &origin)).await;

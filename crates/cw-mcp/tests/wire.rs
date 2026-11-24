@@ -98,6 +98,6 @@ fn the_origin_names_the_mcp_surface_and_the_initialize_client() {
         .unwrap();
     let content = &reply["result"]["structuredContent"];
     assert_eq!(content["surface"], "mcp", "{reply}");
-    assert_eq!(content["actor"], "origin-client", "{reply}");
+    assert_eq!(content["actor"], "  origin-client ", "{reply}");
     harness.close().unwrap().unwrap();
 }
