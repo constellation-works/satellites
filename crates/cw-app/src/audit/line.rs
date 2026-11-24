@@ -136,35 +136,30 @@ pub(super) fn decode(path: &Path, number: usize, bytes: &[u8]) -> Result<Record>
     serde_json::from_value(value).map_err(corrupt)
 }
 
-/// The format of the newest whole line in `tail`, the last bytes of a log.
+/// The format of the newest line in `tail`, the last bytes of a log, whose
+/// format can be read.
 ///
-/// Only lines ended by a line break count; a torn last line is skipped, and
-/// so are blank lines. The first line of `tail` is whole only when `tail` is
-/// the whole file (`whole_file`); otherwise it may start mid-line and is not
-/// read. `Ok(None)` when there is no line to judge, or its format cannot be
-/// read (a corrupt line is the reader's to report, not a reason to stop
-/// logging); `Err(())` when `tail` is cut from a longer file and holds no
-/// whole line, so the newest format is unknown.
+/// Lines are judged newest first. A last line without its line break (torn,
+/// or whole JSON missing only its line break) counts like any other. A line
+/// whose format cannot be read (malformed, blank) is skipped, never trusted,
+/// so it cannot hide an older line in a newer format. The first line of
+/// `tail` is read only when `tail` is the whole file (`whole_file`);
+/// otherwise it may start mid-line and is skipped.
+///
+/// `Ok(None)` when `tail` is the whole file and no line has a readable
+/// format (a corrupt line is the reader's to report, not a reason to stop
+/// logging); `Err(())` when `tail` is cut from a longer file and no line in
+/// it has a readable format, so the newest format is unknown.
 pub(super) fn newest_format(tail: &[u8], whole_file: bool) -> std::result::Result<Option<u32>, ()> {
-    let Some(end) = tail.iter().rposition(|&b| b == b'\n') else {
-        return if whole_file || tail.is_empty() {
-            Ok(None)
-        } else {
-            Err(())
-        };
-    };
-    let mut lines = tail[..end].split(|&b| b == b'\n').rev().peekable();
+    let mut lines = tail.split(|&b| b == b'\n').rev().peekable();
     while let Some(line) = lines.next() {
         let is_first = lines.peek().is_none();
         if is_first && !whole_file {
-            return Err(());
+            break;
         }
-        if line.iter().all(u8::is_ascii_whitespace) {
-            continue;
+        if let Ok(probe) = serde_json::from_slice::<Probe>(line) {
+            return Ok(Some(probe.format.get()));
         }
-        return Ok(serde_json::from_slice::<Probe>(line)
-            .ok()
-            .map(|probe| probe.format.get()));
     }
-    Ok(None)
+    if whole_file { Ok(None) } else { Err(()) }
 }

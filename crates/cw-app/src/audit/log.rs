@@ -75,8 +75,11 @@ impl AuditLog {
         let path = self.path();
         let mut bytes = Vec::with_capacity(line.len() + 1);
         if cw_fs::inspect_file(&path)? {
-            let tail = cw_fs::read_tail(&path, Cap::bytes(TAIL))?;
-            check_newest(&path, &tail)?;
+            // One byte past the window tells a file of exactly TAIL bytes,
+            // read whole, from the cut end of a longer one.
+            let tail = cw_fs::read_tail(&path, Cap::bytes(TAIL + 1))?;
+            let whole_file = u64::try_from(tail.len()).unwrap_or(u64::MAX) <= TAIL;
+            check_newest(&path, &tail, whole_file)?;
             // A torn last line (a crash or short write mid-append) is closed,
             // so this record starts a line of its own instead of being
             // joined to it.
@@ -124,10 +127,9 @@ impl AuditLog {
 }
 
 /// Refuse to append to the log at `path` whose last bytes are `tail` when
-/// its newest whole line is in a newer format, or cannot be found.
-fn check_newest(path: &std::path::Path, tail: &[u8]) -> Result<()> {
-    // The tail is the whole file when it is shorter than the cap.
-    let whole_file = u64::try_from(tail.len()).unwrap_or(u64::MAX) < TAIL;
+/// its newest line with a readable format is in a newer format, or when no
+/// such line is in a tail cut from a longer file.
+fn check_newest(path: &std::path::Path, tail: &[u8], whole_file: bool) -> Result<()> {
     match newest_format(tail, whole_file) {
         Ok(Some(found)) if found > super::FORMAT => Err(Error::NewerLog {
             path: path.to_path_buf(),

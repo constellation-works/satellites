@@ -335,34 +335,54 @@ fn a_torn_last_line_does_not_swallow_the_next_record() -> TestResult {
 
 #[test]
 fn a_log_in_a_newer_format_is_not_appended_to() -> TestResult {
-    let (_scratch, root) = data_dir()?;
-    cw_fs::create_private_dir(&root)?;
-    let log = AuditLog::new(&root);
-    let newer = b"{\"format\":99,\"at\":\"2026-01-03T00:00:00Z\",\"command\":\"note add\"}\n";
-    cw_fs::append(&log.path(), newer)?;
-    let runtime = Runtime::new(&root, ());
+    let newer = r#"{"format":99,"at":"2026-01-03T00:00:00Z","command":"note add"}"#;
+    // A log of exactly the 64 KiB an append reads, its newer line first:
+    // read whole, not as the cut end of a longer file.
+    let mut at_the_cap = format!("{newer}\n");
+    while at_the_cap.len() < 64 * 1024 - 1 {
+        at_the_cap.push(' ');
+    }
+    at_the_cap.push('\n');
+    let cases = [
+        ("the newest line", format!("{newer}\n")),
+        // A malformed newer line does not hide the newer one before it.
+        ("under a malformed line", format!("{newer}\nnot json\n")),
+        // Whole JSON missing only its line break still counts.
+        ("without its line break", newer.to_owned()),
+        ("at the start of a log at the cap", at_the_cap),
+    ];
+    for (case, content) in cases {
+        let (_scratch, root) = data_dir()?;
+        cw_fs::create_private_dir(&root)?;
+        let log = AuditLog::new(&root);
+        cw_fs::append(&log.path(), content.as_bytes())?;
+        let runtime = Runtime::new(&root, ());
 
-    let (result, warning) = exec::<Notes>(
-        &runtime,
-        &origin(),
-        Command::Add {
-            body: "x".to_owned(),
-        },
-    )
-    .settle();
-    // The command's result stands; the refusal is the warning.
-    assert!(result.is_ok());
-    let Some(warning) = warning else {
-        return Err("the refused append was expected to come back as a warning".into());
-    };
-    assert!(matches!(
-        warning.error(),
-        AuditError::NewerLog {
-            found: 99,
-            supported: cw_app::audit::FORMAT,
-            ..
-        }
-    ));
-    assert_eq!(std::fs::read(log.path())?, newer);
+        let (result, warning) = exec::<Notes>(
+            &runtime,
+            &origin(),
+            Command::Add {
+                body: "x".to_owned(),
+            },
+        )
+        .settle();
+        // The command's result stands; the refusal is the warning.
+        assert!(result.is_ok(), "{case}");
+        let Some(warning) = warning else {
+            return Err(format!("{case}: the refused append was expected as a warning").into());
+        };
+        assert!(
+            matches!(
+                warning.error(),
+                AuditError::NewerLog {
+                    found: 99,
+                    supported: cw_app::audit::FORMAT,
+                    ..
+                }
+            ),
+            "{case}: {warning}"
+        );
+        assert_eq!(std::fs::read(log.path())?, content.as_bytes(), "{case}");
+    }
     Ok(())
 }
