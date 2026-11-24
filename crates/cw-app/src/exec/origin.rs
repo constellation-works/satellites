@@ -27,7 +27,7 @@ impl Surface {
 /// itself. Its audit line records both: the surface, and the client as the
 /// actor.
 ///
-/// A command line names the operating-system user ([`crate::Env::user`]);
+/// A command line names the user the environment claims ([`crate::Env::user`]);
 /// an MCP server names the client from its handshake. The actor is a claim,
 /// handed to the command as given; the audit line records it only when it
 /// reads as an identifier ([`crate::audit::ACTOR_PLACEHOLDER`] otherwise).

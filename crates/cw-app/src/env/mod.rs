@@ -73,8 +73,9 @@ impl Env {
         self.global(&HOME).map(Path::new)
     }
 
-    /// The operating-system user: `USER`, else `USERNAME` (Windows), when
-    /// it is valid UTF-8.
+    /// The user the environment claims: `USER` when it is set and valid
+    /// UTF-8, else `USERNAME` on every platform. A claim for the actor, not
+    /// an identity the operating system vouches for.
     #[must_use]
     pub fn user(&self) -> Option<&str> {
         self.global(&USER)

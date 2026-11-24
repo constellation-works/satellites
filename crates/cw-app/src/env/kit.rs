@@ -28,14 +28,16 @@ pub const HOME: EnvVar = EnvVar::global(
     "The home directory; the default data directory is under it.",
 );
 
-/// The operating-system user.
-pub const USER: EnvVar =
-    EnvVar::global("USER", "The operating-system user, recorded as the actor.");
+/// The user the environment claims, recorded as the actor.
+pub const USER: EnvVar = EnvVar::global(
+    "USER",
+    "The user the environment claims, recorded as the actor; a claim, not an identity.",
+);
 
-/// The operating-system user on Windows.
+/// The fallback for the claimed user, on every platform.
 pub const USERNAME: EnvVar = EnvVar::global(
     "USERNAME",
-    "The operating-system user on Windows, read when the one above is unset.",
+    "The claimed user when the one above is unset, empty or not UTF-8, on every platform.",
 );
 
 /// Every variable the kit reads, in the order its table lists them.

@@ -62,8 +62,8 @@ fn the_table_lists_the_kit_variables_then_the_programs_own() {
 | `NO_COLOR` | Any non-empty value turns color off. | — | — |
 | `TERM` | The terminal type, such as `dumb`. | — | — |
 | `HOME` | The home directory; the default data directory is under it. | — | — |
-| `USER` | The operating-system user, recorded as the actor. | — | — |
-| `USERNAME` | The operating-system user on Windows, read when the one above is unset. | — | — |
+| `USER` | The user the environment claims, recorded as the actor; a claim, not an identity. | — | — |
+| `USERNAME` | The claimed user when the one above is unset, empty or not UTF-8, on every platform. | — | — |
 | `MY_TOOL_STEP` | How much `add` adds \\| per call. | `1` | `--step` |
 | `PAGER` | The pager for long output. | — | — |
 ";
