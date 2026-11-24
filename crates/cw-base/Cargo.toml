@@ -1,6 +1,6 @@
 [package]
 name = "cw-base"
-version = "0.1.0"
+version.workspace = true
 description = "One error type for a Rust CLI's units, and a clock a test can pin."
 readme = "README.md"
 keywords = ["error", "clock", "cli"]

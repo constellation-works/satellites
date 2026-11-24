@@ -19,7 +19,8 @@ use tempfile::NamedTempFile;
 /// # Errors
 ///
 /// [`Error::Io`] when any step fails, the directory flush included (a
-/// filesystem that cannot flush directories at all is tolerated).
+/// filesystem that cannot flush directories at all is tolerated). On native
+/// Windows the directory flush is a no-op.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let staged = stage(path, bytes)?;
     staged

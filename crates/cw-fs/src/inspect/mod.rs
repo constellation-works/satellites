@@ -7,8 +7,8 @@
 //! owner-only, no other user can swap an entry in it between a check and the
 //! open that follows; a process of the same user is not a boundary.
 //!
-//! On a platform without Unix modes (Windows) the owner and mode checks are
-//! skipped.
+//! On native Windows the owner and mode checks are skipped; a symbolic link
+//! is still refused.
 
 mod owner;
 
@@ -21,19 +21,26 @@ use std::path::Path;
 
 /// Check an existing private directory; `Ok(false)` when it does not exist.
 ///
-/// A link to the directory is followed: a person may name a data directory
-/// through one, and what is checked is the directory itself.
+/// A symbolic link at `dir` is refused, not followed, even when it leads to
+/// a private directory or nowhere: whoever can replace the link can point
+/// the data anywhere. A link in a component above `dir` is used as given.
 ///
 /// # Errors
 ///
-/// [`Error::ForeignOwner`] or [`Error::Permissions`] when it is refused;
-/// [`Error::Io`] when it cannot be inspected or is not a directory.
+/// [`Error::Symlink`] for a link; [`Error::ForeignOwner`] or
+/// [`Error::Permissions`] when the directory is refused; [`Error::Io`] when
+/// it cannot be inspected or is not a directory.
 pub fn inspect_dir(dir: &Path) -> Result<bool> {
-    let meta = match std::fs::metadata(dir) {
+    let meta = match std::fs::symlink_metadata(dir) {
         Ok(meta) => meta,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(e) => return Err(Error::io("inspect", dir, e)),
     };
+    if meta.file_type().is_symlink() {
+        return Err(Error::Symlink {
+            path: dir.to_path_buf(),
+        });
+    }
     if !meta.is_dir() {
         return Err(Error::io(
             "inspect",

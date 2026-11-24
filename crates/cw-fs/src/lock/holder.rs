@@ -4,23 +4,47 @@
 //! through the descriptor the holder locked, never by name, so it cannot
 //! follow a link planted since the open; it is not durable state, so a
 //! reader that finds it torn, empty or unparsable treats it as no record.
+//!
+//! Writer and reader share one bound, [`RECORD_CAP`]: the label is cut to
+//! fit it, so a record the holder wrote is always one a waiter can read.
+//!
+//! A waiter names the holder only while the recorded process is alive, and
+//! how well that can be told depends on the platform:
+//!
+//! - **Linux** records the process's start time beside its pid and reads
+//!   `/proc/<pid>/stat` back: a process that has exited, a zombie, or a
+//!   later process that reused the pid is not named.
+//! - **Other Unix** asks the kernel whether the pid exists (signal 0). A
+//!   zombie that its parent has not reaped, and an unrelated process that
+//!   reused the pid, still count as alive there.
+//! - **Native Windows** never names another process: a second handle cannot
+//!   read the record while the holder's lock covers the file, and there is
+//!   no liveness probe here. Only a record of this very process is named.
 
 use cw_base::Clock;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Read as _, Seek as _, SeekFrom, Write as _};
 
-/// The most bytes of a record a waiter reads.
-const RECORD_CAP: u64 = 4096;
+/// The most bytes a record may take, for the writer and the reader alike.
+const RECORD_CAP: usize = 4096;
 
 /// Who holds a lock, as the holder recorded it.
+///
+/// A waiter names the holder only while the process that wrote the record
+/// is alive. On Linux that is checked against the process's start time, so
+/// an exited process, a zombie or a reused pid is not named. Elsewhere on
+/// Unix only the pid's existence is checked: a zombie, or an unrelated
+/// process that reused the pid, may be named. Native Windows names no other
+/// process.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Holder {
     /// The holder's process id.
     pub pid: u32,
     /// When it took the lock, as an RFC 3339 timestamp in UTC.
     pub time: String,
-    /// What it said it was doing.
+    /// What it said it was doing, cut at a character boundary when the whole
+    /// record would not fit in 4096 bytes.
     pub label: String,
 }
 
@@ -30,14 +54,21 @@ impl fmt::Display for Holder {
     }
 }
 
+/// A record as read back: the holder, and the start time of its process
+/// when the writer's platform records one.
+struct Record {
+    holder: Holder,
+    start: Option<u64>,
+}
+
 /// Replace the record in `file` with this process, now, and `label`.
 pub(super) fn record(file: &File, label: &str) -> io::Result<()> {
-    let holder = Holder {
-        pid: std::process::id(),
-        time: Clock::system().now_rfc3339().unwrap_or_default(),
-        label: label.to_owned(),
-    };
-    overwrite(file, encode(&holder).as_bytes())
+    let pid = std::process::id();
+    let time = Clock::system().now_rfc3339().unwrap_or_default();
+    overwrite(
+        file,
+        encode(pid, identity::start_of(pid), &time, label).as_bytes(),
+    )
 }
 
 /// Clear the record on release.
@@ -45,16 +76,19 @@ pub(super) fn clear(file: &File) -> io::Result<()> {
     overwrite(file, b"")
 }
 
-/// The recorded holder, when there is a readable record and its process is
-/// still alive. A process that has exited is never named: its pid may
-/// already belong to something else.
+/// The recorded holder, when there is a readable record and the process
+/// that wrote it is still alive, as far as this platform can tell (see the
+/// module docs). Nothing decides ownership from it.
 pub(super) fn read_live(file: &File) -> Option<Holder> {
     let mut bytes = Vec::new();
     let mut reader = file;
     reader.seek(SeekFrom::Start(0)).ok()?;
-    reader.take(RECORD_CAP).read_to_end(&mut bytes).ok()?;
-    let holder = decode(std::str::from_utf8(&bytes).ok()?.trim())?;
-    is_alive(holder.pid).then_some(holder)
+    reader
+        .take(u64::try_from(RECORD_CAP).ok()?)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let record = decode(std::str::from_utf8(&bytes).ok()?.trim())?;
+    identity::wrote_and_lives(record.holder.pid, record.start).then_some(record.holder)
 }
 
 fn overwrite(file: &File, bytes: &[u8]) -> io::Result<()> {
@@ -65,67 +99,140 @@ fn overwrite(file: &File, bytes: &[u8]) -> io::Result<()> {
     writer.sync_data()
 }
 
-#[cfg(unix)]
-fn is_alive(pid: u32) -> bool {
-    use rustix::io::Errno;
-    use rustix::process::{Pid, test_kill_process};
-    if pid == std::process::id() {
-        return true;
+#[cfg(target_os = "linux")]
+mod identity {
+    //! On Linux, a process is its pid and its start time, both read from
+    //! `/proc/<pid>/stat`.
+
+    use std::io::Read as _;
+
+    /// The most bytes of a `stat` line read; the line is far shorter.
+    const STAT_CAP: u64 = 4096;
+
+    /// The state and start time of `pid`, or `None` when it has no entry.
+    fn stat(pid: u32) -> Option<(char, u64)> {
+        let mut text = String::new();
+        std::fs::File::open(format!("/proc/{pid}/stat"))
+            .ok()?
+            .take(STAT_CAP)
+            .read_to_string(&mut text)
+            .ok()?;
+        // The command name, in parentheses, may hold spaces and `)`; the
+        // fields after the last `)` are plain. State is field 3, start time
+        // field 22: the first and the twentieth after the name.
+        let rest = &text[text.rfind(')')? + 1..];
+        let mut fields = rest.split_whitespace();
+        let state = fields.next()?.chars().next()?;
+        let start = fields.nth(18)?.parse().ok()?;
+        Some((state, start))
     }
-    let Some(pid) = i32::try_from(pid).ok().and_then(Pid::from_raw) else {
-        return false;
-    };
-    // EPERM: the process exists but belongs to another user.
-    matches!(test_kill_process(pid), Ok(()) | Err(Errno::PERM))
+
+    /// The start time to record for `pid`.
+    pub(super) fn start_of(pid: u32) -> Option<u64> {
+        stat(pid).map(|(_, start)| start)
+    }
+
+    /// Whether `pid` is a running process (not exited, not a zombie) and,
+    /// when the record has a start time, the same process that wrote it.
+    pub(super) fn wrote_and_lives(pid: u32, start: Option<u64>) -> bool {
+        match stat(pid) {
+            None => false,
+            Some(('Z' | 'X' | 'x', _)) => false,
+            Some((_, now)) => start.is_none_or(|recorded| recorded == now),
+        }
+    }
 }
 
-/// Without a way to ask whether another process lives, only this process
-/// is known to.
+#[cfg(all(unix, not(target_os = "linux")))]
+mod identity {
+    //! Elsewhere on Unix, only whether the pid exists can be asked cheaply.
+
+    /// No start time is recorded here.
+    pub(super) fn start_of(_pid: u32) -> Option<u64> {
+        None
+    }
+
+    /// Whether `pid` exists. A zombie, or another process that reused the
+    /// pid, counts as alive: signal 0 cannot tell them apart.
+    pub(super) fn wrote_and_lives(pid: u32, _start: Option<u64>) -> bool {
+        use rustix::io::Errno;
+        use rustix::process::{Pid, test_kill_process};
+        if pid == std::process::id() {
+            return true;
+        }
+        let Some(pid) = i32::try_from(pid).ok().and_then(Pid::from_raw) else {
+            return false;
+        };
+        // EPERM: the process exists but belongs to another user.
+        matches!(test_kill_process(pid), Ok(()) | Err(Errno::PERM))
+    }
+}
+
 #[cfg(not(unix))]
-fn is_alive(pid: u32) -> bool {
-    pid == std::process::id()
+mod identity {
+    //! Without a liveness probe, only this process is known to be alive.
+
+    /// No start time is recorded here.
+    pub(super) fn start_of(_pid: u32) -> Option<u64> {
+        None
+    }
+
+    /// Whether `pid` is this process.
+    pub(super) fn wrote_and_lives(pid: u32, _start: Option<u64>) -> bool {
+        pid == std::process::id()
+    }
 }
 
-/// `{"pid":1,"time":"…","label":"…"}` and a newline.
-fn encode(holder: &Holder) -> String {
-    let mut out = format!("{{\"pid\":{},\"time\":", holder.pid);
-    push_string(&mut out, &holder.time);
+/// `{"pid":1,"start":2,"time":"…","label":"…"}` and a newline, at most
+/// [`RECORD_CAP`] bytes: the label is cut at a character boundary to fit.
+fn encode(pid: u32, start: Option<u64>, time: &str, label: &str) -> String {
+    let mut out = format!("{{\"pid\":{pid},");
+    if let Some(start) = start {
+        out.push_str(&format!("\"start\":{start},"));
+    }
+    out.push_str("\"time\":");
+    push_string(&mut out, time, usize::MAX);
     out.push_str(",\"label\":");
-    push_string(&mut out, &holder.label);
+    // What follows the label: its closing quote, the brace, the newline.
+    let budget = RECORD_CAP.saturating_sub(out.len() + 3);
+    push_string(&mut out, label, budget);
     out.push_str("}\n");
     out
 }
 
-fn push_string(out: &mut String, text: &str) {
+/// Push `text` as a JSON string, stopping before a character whose escape
+/// would take its body past `budget` bytes.
+fn push_string(out: &mut String, text: &str, budget: usize) {
     out.push('"');
+    let mut used = 0;
     for c in text.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            c if u32::from(c) < 0x20 => out.push_str(&format!("\\u{:04x}", u32::from(c))),
-            c => out.push(c),
+        let escaped = match c {
+            '"' => String::from("\\\""),
+            '\\' => String::from("\\\\"),
+            c if u32::from(c) < 0x20 => format!("\\u{:04x}", u32::from(c)),
+            c => c.to_string(),
+        };
+        used += escaped.len();
+        if used > budget {
+            break;
         }
+        out.push_str(&escaped);
     }
     out.push('"');
 }
 
-/// Read a record [`encode`] wrote: an object with `pid`, `time` and `label`
-/// in any order. Anything else is no record.
-fn decode(text: &str) -> Option<Holder> {
+/// Read a record [`encode`] wrote: an object with `pid`, `time`, `label`
+/// and an optional `start`, in any order. Anything else is no record.
+fn decode(text: &str) -> Option<Record> {
     let mut chars = text.chars().peekable();
-    let (mut pid, mut time, mut label) = (None, None, None);
+    let (mut pid, mut start, mut time, mut label) = (None, None, None, None);
     expect(&mut chars, '{')?;
     loop {
         let key = parse_string(&mut chars)?;
         expect(&mut chars, ':')?;
         match key.as_str() {
-            "pid" => {
-                let mut digits = String::new();
-                while let Some(c) = chars.next_if(char::is_ascii_digit) {
-                    digits.push(c);
-                }
-                pid = Some(digits.parse::<u32>().ok()?);
-            }
+            "pid" => pid = Some(parse_number(&mut chars)?.try_into().ok()?),
+            "start" => start = Some(parse_number(&mut chars)?),
             "time" => time = Some(parse_string(&mut chars)?),
             "label" => label = Some(parse_string(&mut chars)?),
             _ => return None,
@@ -139,11 +246,22 @@ fn decode(text: &str) -> Option<Holder> {
     if chars.next().is_some() {
         return None;
     }
-    Some(Holder {
-        pid: pid?,
-        time: time?,
-        label: label?,
+    Some(Record {
+        holder: Holder {
+            pid: pid?,
+            time: time?,
+            label: label?,
+        },
+        start,
     })
+}
+
+fn parse_number(chars: &mut Chars<'_>) -> Option<u64> {
+    let mut digits = String::new();
+    while let Some(c) = chars.next_if(char::is_ascii_digit) {
+        digits.push(c);
+    }
+    digits.parse().ok()
 }
 
 type Chars<'a> = std::iter::Peekable<std::str::Chars<'a>>;

@@ -64,8 +64,31 @@ mod unix {
             matches!(err, Error::Permissions { mode, .. } if mode == want_mode),
             "got {err:?}"
         );
-        let chmod = format!("chmod {fix} {}", path.display());
+        // The path is quoted, so the remedy is one shell word.
+        let chmod = format!("chmod {fix} '{}'", path.display());
         assert!(message.contains(&chmod), "{message:?} lacks {chmod:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_symlinked_directory_is_refused_even_when_it_leads_to_a_private_one() -> TestResult {
+        use cw_fs::list;
+        let dir = private_tempdir()?;
+        let root = dir.path().join("root");
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&root, &link)?;
+        let err = inspect_dir(&link)
+            .err()
+            .ok_or("a linked directory passed")?;
+        assert!(matches!(err, Error::Symlink { .. }), "got {err:?}");
+        let err = list(&link).err().ok_or("a linked directory was listed")?;
+        assert!(matches!(err, Error::Symlink { .. }), "got {err:?}");
+        let dangling = dir.path().join("dangling");
+        std::os::unix::fs::symlink(dir.path().join("nowhere"), &dangling)?;
+        let err = inspect_dir(&dangling)
+            .err()
+            .ok_or("a dangling link passed")?;
+        assert!(matches!(err, Error::Symlink { .. }), "got {err:?}");
         Ok(())
     }
 

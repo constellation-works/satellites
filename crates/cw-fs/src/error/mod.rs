@@ -12,7 +12,7 @@ pub use entry::EntryKind;
 use crate::lock::Holder;
 use cw_base::Kind;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// Why a file operation failed or was refused.
@@ -76,7 +76,7 @@ pub enum Error {
     #[error(
         "refusing {}: mode {mode:o} is open to other users; fix with: chmod {fix} {}",
         path.display(),
-        path.display()
+        shell_quoted(path)
     )]
     Permissions {
         /// The directory or file.
@@ -137,6 +137,12 @@ impl Error {
             source,
         }
     }
+}
+
+/// `path` as one shell word, so the remedy is safe to paste whatever the
+/// path holds: single-quoted, with each `'` written as `'\''`.
+fn shell_quoted(path: &Path) -> String {
+    format!("'{}'", path.display().to_string().replace('\'', r"'\''"))
 }
 
 /// `Result` with this crate's [`Error`].

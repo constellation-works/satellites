@@ -41,41 +41,76 @@ fn child_holds_the_lock_until_stdin_closes() -> TestResult {
     Ok(())
 }
 
-/// A child process holding the lock at `path`; it releases it and exits
-/// when its stdin is closed.
-fn hold_in_child(path: &Path) -> Result<Child, Box<dyn std::error::Error>> {
-    let mut child = Command::new(std::env::current_exe()?)
-        .args([
-            "child_holds_the_lock_until_stdin_closes",
-            "--exact",
-            "--ignored",
-            "--nocapture",
-            "--test-threads=1",
-        ])
-        .env(HOLD_ENV, path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()?;
-    let stdout = child.stdout.take().ok_or("no child stdout")?;
-    let mut lines = BufReader::new(stdout).lines();
-    loop {
-        let Some(line) = lines.next() else {
-            return Err("the child exited before taking the lock".into());
-        };
-        if line?.contains(READY) {
-            // Keep reading, so the child's last lines never meet a closed
-            // pipe.
-            std::thread::spawn(move || lines.for_each(drop));
-            return Ok(child);
-        }
+/// How long the parent waits for the child to take the lock, or to exit.
+const CHILD_DEADLINE: Duration = Duration::from_secs(10);
+
+/// A child process holding a lock. Dropping it, on any path out of a test
+/// (a panic included), kills the child and reaps it.
+struct HeldByChild {
+    child: Child,
+}
+
+impl Drop for HeldByChild {
+    fn drop(&mut self) {
+        // Both fail harmlessly when the child was already reaped.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
-fn release(mut child: Child) -> TestResult {
-    drop(child.stdin.take());
-    let status = child.wait()?;
-    assert!(status.success(), "the child failed: {status}");
-    Ok(())
+/// A child process holding the lock at `path`, once it says so within
+/// [`CHILD_DEADLINE`]; it releases the lock and exits when its stdin closes.
+fn hold_in_child(path: &Path) -> Result<HeldByChild, Box<dyn std::error::Error>> {
+    let mut held = HeldByChild {
+        child: Command::new(std::env::current_exe()?)
+            .args([
+                "child_holds_the_lock_until_stdin_closes",
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(HOLD_ENV, path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?,
+    };
+    let stdout = held.child.stdout.take().ok_or("no child stdout")?;
+    let (ready, readiness) = std::sync::mpsc::channel();
+    // Reads every line, so the child's last lines never meet a closed pipe,
+    // and reports the readiness line when it comes.
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            match line {
+                Ok(line) if line.contains(READY) => {
+                    let _ = ready.send(());
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+    });
+    readiness
+        .recv_timeout(CHILD_DEADLINE)
+        .map_err(|_| "the child did not take the lock in time")?;
+    Ok(held)
+}
+
+/// Close the child's stdin and wait, within [`CHILD_DEADLINE`], for it to
+/// release the lock and exit successfully.
+fn release(mut held: HeldByChild) -> TestResult {
+    drop(held.child.stdin.take());
+    let deadline = Instant::now() + CHILD_DEADLINE;
+    loop {
+        if let Some(status) = held.child.try_wait()? {
+            assert!(status.success(), "the child failed: {status}");
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err("the child did not exit in time".into());
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 fn locked_holder(result: FsResult<Lock>) -> Result<Option<Holder>, Box<dyn std::error::Error>> {
@@ -91,7 +126,7 @@ fn a_second_process_waits_and_times_out_naming_the_live_holder() -> TestResult {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join(".lock");
     let child = hold_in_child(&path)?;
-    let child_pid = child.id();
+    let child_pid = child.child.id();
     let started = Instant::now();
     let result = Lock::acquire(&path, "waiter", SHORT_WAIT);
     let waited = started.elapsed();
@@ -141,6 +176,12 @@ fn a_record_left_by_an_exited_process_is_not_named() -> TestResult {
             "{{\"pid\":{gone_pid},\"time\":\"2026-01-01T00:00:00Z\",\"label\":\"finished\"}}\n"
         ),
     )?;
+    // A lock file must be private, as `Lock` itself creates it.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
     // Held outside `Lock`, as a holder that died before clearing would
     // leave it, but with the lock still taken.
     let held = std::fs::OpenOptions::new()
@@ -194,6 +235,74 @@ fn the_same_thread_acquiring_a_held_lock_is_refused_at_once() -> TestResult {
     let took = started.elapsed();
     assert!(matches!(err, Error::Reentrant { .. }), "got {err:?}");
     assert!(took < Duration::from_secs(5), "refused only after {took:?}");
+    Ok(())
+}
+
+#[test]
+fn a_waiter_never_takes_the_lock_after_its_deadline() -> TestResult {
+    // The holder lets go a little before the waiter's deadline, while the
+    // waiter is in its last sleep, which ends at the deadline or later. A
+    // waiter that tried once more on waking would take the lock late.
+    let wait = Duration::from_millis(30);
+    let release_at = Duration::from_millis(22);
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join(".lock");
+    let (held, holding) = std::sync::mpsc::channel();
+    let holder_path = path.clone();
+    let holder = std::thread::spawn(move || -> Result<(), Error> {
+        let lock = Lock::acquire(&holder_path, "holder", Duration::ZERO)?;
+        let started = Instant::now();
+        let _ = held.send(());
+        std::thread::sleep(release_at.saturating_sub(started.elapsed()));
+        drop(lock);
+        Ok(())
+    });
+    holding.recv_timeout(Duration::from_secs(10))?;
+    let started = Instant::now();
+    let result = Lock::acquire(&path, "waiter", wait);
+    let elapsed = started.elapsed();
+    holder.join().map_err(|_| "the holder panicked")??;
+    match result {
+        Err(Error::Locked { .. }) => {}
+        Ok(_) => assert!(
+            elapsed < wait,
+            "the lock was taken after the deadline ({elapsed:?})"
+        ),
+        Err(other) => return Err(format!("expected Locked, got {other:?}").into()),
+    }
+    Ok(())
+}
+
+#[test]
+fn a_long_label_is_cut_so_a_waiter_can_still_read_the_holder() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join(".lock");
+    let label = "é".repeat(5000);
+    let _lock = Lock::acquire(&path, &label, Duration::ZERO)?;
+    assert!(
+        std::fs::metadata(&path)?.len() <= 4096,
+        "the record outgrew the cap"
+    );
+    let other = path.clone();
+    let result = std::thread::spawn(move || Lock::acquire(&other, "waiter", SHORT_WAIT).map(drop))
+        .join()
+        .map_err(|_| "the waiter panicked")?;
+    let err = result.err().ok_or("the waiter took a held lock")?;
+    let Error::Locked {
+        holder: Some(holder),
+        ..
+    } = err
+    else {
+        return Err(format!("expected Locked naming the holder, got {err:?}").into());
+    };
+    assert_eq!(holder.pid, std::process::id());
+    assert!(
+        !holder.label.is_empty()
+            && label.starts_with(&holder.label)
+            && holder.label.len() < label.len(),
+        "the recorded label is not a cut of the one given ({} bytes)",
+        holder.label.len()
+    );
     Ok(())
 }
 

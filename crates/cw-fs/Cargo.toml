@@ -1,6 +1,6 @@
 [package]
 name = "cw-fs"
-version = "0.1.0"
+version.workspace = true
 description = "Durable, owner-only file access and one advisory lock with a deadline, for a CLI's private data directory."
 readme = "README.md"
 keywords = ["atomic-write", "file-lock", "flock", "fsync", "cli"]
