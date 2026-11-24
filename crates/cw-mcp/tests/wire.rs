@@ -33,21 +33,39 @@ fn tools_list_gives_each_tool_its_name_description_derived_schema_and_access() {
     let names: Vec<_> = tools.iter().map(|tool| &tool["name"]).collect();
     assert_eq!(names, ["echo", "list", "fail", "explode"], "{reply}");
 
-    let echo = &tools[0];
-    assert_eq!(echo["description"], "Say the text back.");
-    let schema = &echo["inputSchema"];
-    assert_eq!(schema["type"], "object", "{schema}");
-    assert_eq!(schema["properties"]["text"]["type"], "string", "{schema}");
-    assert_eq!(
-        schema["properties"]["text"]["description"], "What to say back.",
-        "{schema}"
-    );
-    assert_eq!(schema["required"], json!(["text"]), "{schema}");
-    assert!(schema.get("title").is_none(), "{schema}");
-    assert_eq!(
-        tools[2]["inputSchema"]["properties"]["busy"]["type"],
-        "boolean"
-    );
+    // Each tool's description and the schema derived from its input type:
+    // draft 2020-12, an object, without the type's own title.
+    let schema = "https://json-schema.org/draft/2020-12/schema";
+    let empty = json!({"$schema": schema, "type": "object"});
+    let expected = [
+        (
+            "Say the text back.",
+            json!({
+                "$schema": schema,
+                "type": "object",
+                "properties": {"text": {"type": "string", "description": "What to say back."}},
+                "required": ["text"],
+            }),
+        ),
+        ("Return a list.", empty.clone()),
+        (
+            "Fail on purpose.",
+            json!({
+                "$schema": schema,
+                "type": "object",
+                "properties": {"busy": {
+                    "type": "boolean",
+                    "description": "Fail as busy (retryable) rather than refused.",
+                }},
+                "required": ["busy"],
+            }),
+        ),
+        ("Panic on purpose.", empty),
+    ];
+    for (tool, (description, input_schema)) in tools.iter().zip(expected) {
+        assert_eq!(tool["description"], description, "{tool}");
+        assert_eq!(tool["inputSchema"], input_schema, "{tool}");
+    }
 
     let read_only: Vec<_> = tools
         .iter()
