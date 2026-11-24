@@ -8,7 +8,9 @@ its own: no dependency on Orbit, its own docs and examples, and semver from its 
 
 | Crate | What it does | Status |
 |---|---|---|
-| — | — | The first crate, a cross-platform process sandbox (Landlock, Bubblewrap, Seatbelt), is in progress. |
+| [cw-base](crates/cw-base) | One error type that keeps a unit's typed error whole, with its kind and code; a clock a test can pin; RFC 3339 timestamps | 0.1.0, unreleased |
+| [cw-fs](crates/cw-fs) | Durable, owner-only file access and one advisory lock with a deadline | 0.1.0, unreleased |
+| — | A cross-platform process sandbox (Landlock, Bubblewrap, Seatbelt) | In progress |
 
 ## Development
 

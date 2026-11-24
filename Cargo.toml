@@ -11,6 +11,14 @@ license = "MIT"
 repository = "https://github.com/constellation-works/satellites"
 
 [workspace.dependencies]
+# Kit crates, by path for the workspace and by version for publishing.
+cw-base = { path = "crates/cw-base", version = "0.1.0" }
+cw-fs = { path = "crates/cw-fs", version = "0.1.0" }
+
+rustix = { version = "1.1", default-features = false, features = ["std", "fs", "process"] }
+tempfile = "3.25"
+thiserror = "2.0.18"
+time = { version = "0.3.47", default-features = false, features = ["std", "formatting", "parsing"] }
 
 # STD-02 lint baseline, verbatim from the standard. Do not trim it; add to it.
 # Workspace-wide lint config. Each crate opts in via `[lints] workspace = true`.

@@ -14,6 +14,9 @@ ignore = [
 allow = [
     "MIT",
     "Apache-2.0",
+    # unicode-ident (through proc-macro2, under thiserror's derive) carries
+    # the Unicode data licence alongside MIT OR Apache-2.0.
+    "Unicode-3.0",
 ]
 confidence-threshold = 0.9
 

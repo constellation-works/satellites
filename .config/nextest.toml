@@ -1,0 +1,13 @@
+# nextest configuration (STD-03 R22: every test has a wall-clock bound).
+
+[profile.default]
+# A test still running after 60 s is reported slow, and killed at 120 s.
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+# The lock tests measure wall-clock time. Each runs alone, so a busy shared
+# runner cannot stretch one test's waits with another's work, and each has a
+# tighter deadline of its own.
+[[profile.default.overrides]]
+filter = "package(cw-fs) & binary(lock)"
+threads-required = "num-test-threads"
+slow-timeout = { period = "15s", terminate-after = 2 }

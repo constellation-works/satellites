@@ -1,0 +1,19 @@
+[package]
+name = "cw-base"
+version = "0.1.0"
+description = "One error type for a Rust CLI's units, and a clock a test can pin."
+readme = "README.md"
+keywords = ["error", "clock", "cli"]
+categories = ["rust-patterns", "date-and-time"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# cw-base depends on no kit crate (scripts/check-dependency-direction.sh).
+[dependencies]
+thiserror.workspace = true
+time.workspace = true
+
+[lints]
+workspace = true
