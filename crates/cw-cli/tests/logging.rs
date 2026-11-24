@@ -67,3 +67,11 @@ fn a_bad_level_falls_back_to_warn_with_a_warning() {
     assert!(!out.contains("an info line"), "{out}");
     assert!(warning.is_some_and(|w| w.contains("NOTES_LOG")));
 }
+
+#[test]
+fn a_filter_with_no_directive_falls_back_to_warn() {
+    let (out, warning) = logged(&[("NOTES_LOG", ",")]);
+    assert!(out.contains("a warn line"), "{out}");
+    assert!(!out.contains("an info line"), "{out}");
+    assert_eq!(warning, None);
+}

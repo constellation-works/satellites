@@ -23,7 +23,8 @@ pub struct Logging {
 
 impl Logging {
     /// Resolve the filter from `<APP>_LOG` in `env`, for the program named
-    /// `app`. Never fails: a value that is not UTF-8 or does not parse
+    /// `app`. Unset, empty, or holding no directive (`,`) means
+    /// [`DEFAULT_LEVEL`]. Never fails: a value that is not UTF-8 or does not parse
     /// leaves the default in place and a [`Logging::warning`].
     #[must_use]
     pub fn from_env(env: &Env, app: &str) -> Self {
@@ -37,6 +38,11 @@ impl Logging {
                 "ignoring {name}: not valid UTF-8; logging at {DEFAULT_LEVEL}"
             )));
         };
+        // A value with no directive in it (`,`) parses to a filter that
+        // passes nothing, not even a warning: it means the default.
+        if spec.split(',').all(|directive| directive.trim().is_empty()) {
+            return Self::default_level(None);
+        }
         match EnvFilter::try_new(spec) {
             Ok(filter) => Self {
                 filter,
