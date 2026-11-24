@@ -6,8 +6,8 @@
 //! path and bytes, and wraps its [`Error`] in its own typed error with its
 //! own code.
 //!
-//! - [`file`](mod@file): [`write_atomic`], [`create_new`], [`append`], [`read`] with a
-//!   [`Cap`], [`remove`].
+//! - [`file`](mod@file): [`write_atomic`], [`create_new`], [`append`],
+//!   [`read`] and [`read_tail`] with a [`Cap`], [`remove`].
 //! - [`dir`]: [`list`], [`create_private_dir`].
 //! - [`inspect`]: [`inspect_file`], [`inspect_dir`], which refuse state that
 //!   is a link, another user's, or open to any group or other permission
@@ -34,6 +34,6 @@ pub mod lock;
 
 pub use dir::{create_private_dir, list};
 pub use error::{EntryKind, Error, Result};
-pub use file::{Cap, append, create_new, read, remove, write_atomic};
+pub use file::{Cap, append, create_new, read, read_tail, remove, write_atomic};
 pub use inspect::{inspect_dir, inspect_file};
 pub use lock::{Holder, Lock};

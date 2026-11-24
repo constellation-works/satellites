@@ -17,10 +17,13 @@ cw-base = { path = "crates/cw-base", version = "0.1.0" }
 cw-fs = { path = "crates/cw-fs", version = "0.1.0" }
 cw-supervise = { path = "crates/cw-supervise", version = "0.1.0" }
 cw-sqlite = { path = "crates/cw-sqlite", version = "0.1.0" }
+cw-app = { path = "crates/cw-app", version = "0.1.0" }
 
 # cw-sqlite builds its own SQLite and re-exports rusqlite, so a project names one version.
 rusqlite = { version = "0.43", default-features = false, features = ["bundled", "cache"] }
 rustix = { version = "1.1", default-features = false, features = ["std", "fs", "process"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
 tempfile = "3.25"
 thiserror = "2.0.18"
 time = { version = "0.3.47", default-features = false, features = ["std", "formatting", "parsing"] }

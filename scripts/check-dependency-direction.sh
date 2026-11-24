@@ -22,6 +22,7 @@ cw-fs: cw-base
 cw-testkit:
 cw-supervise:
 cw-sqlite: cw-base cw-fs
+cw-app: cw-base cw-fs
 '
 
 # crate: the modules its sources must not name (space-separated). Found in a
@@ -31,6 +32,14 @@ cw-sqlite: cw-base cw-fs
 # cw-base does no I/O and reads no environment.
 FORBIDDEN='
 cw-base: std::fs std::env std::process
+cw-app: std::env
+'
+
+# crate: the folders under its src/ that the FORBIDDEN search skips, the one
+# place the crate may name what its row forbids (space-separated).
+# cw-app reads the process environment only in src/env/.
+EXEMPT='
+cw-app: env
 '
 
 root=${1:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)} || exit 2
@@ -91,6 +100,11 @@ while IFS=$tab read -r crate dir deps; do
       *) fail "$crate depends on $dep; its row allows: ${allowed:-no kit crate}" ;;
     esac
   done
+  # The exempt folders, as `find` arguments that skip them.
+  set --
+  for skip in $(row "$EXEMPT" "$crate"); do
+    set -- "$@" -path "$dir/src/$skip" -prune -o
+  done
   for module in $(row "$FORBIDDEN" "$crate"); do
     parent=${module%%::*}
     leaf=${module##*::}
@@ -99,7 +113,7 @@ while IFS=$tab read -r crate dir deps; do
     grouped="(^|[^A-Za-z0-9_:])(::)?$parent ?:: ?\{.*[{,] ?$leaf$edge"
     # One line per offending statement, "<file>: <statement>"; a file name
     # may hold spaces, so it is read whole from each line of `find`.
-    hits=$(find "$dir/src" -name '*.rs' 2>/dev/null | LC_ALL=C sort |
+    hits=$(find "$dir/src" "$@" -name '*.rs' -print 2>/dev/null | LC_ALL=C sort |
       while IFS= read -r file; do
         statements "$file" | grep -E "$direct|$grouped" | sed 's/^ *//' |
           while IFS= read -r statement; do
