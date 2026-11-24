@@ -17,7 +17,7 @@ use clap::{Arg, ArgMatches, Command, value_parser};
 use cw_app::Env;
 use cw_base::{Error, Kind};
 use cw_cli::help::{Group, grouped};
-use cw_cli::{Cell, Column, Exit, Format, Logging, Role, Sink, Table, Terminal};
+use cw_cli::{Cell, Column, Exit, Format, Logging, Probe, Role, Sink, Table, Terminal};
 use serde::Serialize;
 use std::io::Write;
 use std::process::ExitCode;
@@ -96,10 +96,16 @@ const GROUPS: &[Group<'_>] = &[Group {
 fn main() -> ExitCode {
     let env = Env::capture();
     Logging::from_env(&env, APP).init();
-    // The help is grouped to the width of the terminal the decision found.
-    let help_width = Terminal::detect(&env, APP, None).width();
+    // The streams are probed once. The help is grouped to the width that
+    // probe gives, before the flags are parsed; the output decision is then
+    // made from the same probe and the parsed `--format`, so help and output
+    // see one width.
+    let probe = Probe::detect();
+    let help_width = Terminal::decide(&env, APP, probe, None).width();
     let matches = grouped(cli(), GROUPS, help_width).get_matches();
-    let terminal = Terminal::detect(&env, APP, matches.get_one::<Format>("format").copied());
+    let format = matches.get_one::<Format>("format").copied();
+    let terminal = Terminal::decide(&env, APP, probe, format);
+    debug_assert_eq!(terminal.width(), help_width);
     let mut sink = Sink::stdio(terminal);
     let outcome = run(&mut sink, &matches).and_then(|()| sink.finish().map_err(NotesError::from));
     match outcome {
