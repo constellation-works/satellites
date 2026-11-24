@@ -109,6 +109,12 @@ fn a_value_is_cut_with_one_ellipsis_only_on_a_terminal() -> TestResult {
     let narrow = render(&table, Probe::terminal(Some(20)))?;
     assert_eq!(narrow, "ID  TITLE\nn1  a title much lo…\n");
     assert_eq!(narrow.matches('…').count(), 1);
+    // A kept part that already ends in `…` gets no second one.
+    let ellipsis = Table::new([Column::new("TITLE").truncatable()]).row([Cell::new("123456…AB")]);
+    assert_eq!(
+        render(&ellipsis, Probe::terminal(Some(8)))?,
+        "TITLE\n123456…\n"
+    );
     // Piped, and on a terminal of unknown width, nothing is cut.
     assert_eq!(render(&table, Probe::piped())?, format!("n1\t{long}\n"));
     assert_eq!(

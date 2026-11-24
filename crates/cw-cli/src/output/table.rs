@@ -284,7 +284,7 @@ impl Table {
 }
 
 /// `text` cut to `width` display columns, ending in one `…` when anything
-/// was cut.
+/// was cut. A kept part that already ends in `…` gets no second one.
 fn truncate(text: &str, width: usize) -> String {
     if text.width() <= width {
         return text.to_owned();
@@ -300,7 +300,7 @@ fn truncate(text: &str, width: usize) -> String {
         cut.push(c);
         used += w;
     }
-    if width > 0 {
+    if width > 0 && !cut.ends_with('…') {
         cut.push('…');
     }
     cut
