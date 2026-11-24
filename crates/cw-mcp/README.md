@@ -30,6 +30,10 @@ cw_mcp::serve_stdio(ServerInfo::new("notes", "0.1.0", "notes_internal"), runtime
 
 - **The schema is the parse.** A tool's input schema is derived from the type its function
   receives, so the schema a client reads and the parse a call goes through cannot drift.
+  The type's `Deserialize` is the only check: no JSON Schema validator runs. Do not put a
+  `schemars` attribute Serde does not enforce (`range`, `length`, `pattern`) on a tool's
+  input, because the schema would advertise a limit a call could break and still run. A
+  value limit goes in a field type whose `Deserialize` refuses what breaks it.
 - **The origin.** Each call's `Origin` names the `mcp` surface and the client's name from
   its `initialize` handshake, exactly as sent; `cw_app`'s actor rule decides what an audit
   line records of it.

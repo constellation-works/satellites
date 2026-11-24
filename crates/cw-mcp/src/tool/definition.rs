@@ -42,6 +42,13 @@ impl<S: 'static> Tool<S> {
     /// The input schema is derived from `I` here; one that is not an object
     /// schema is refused when the [`crate::Server`] is built.
     ///
+    /// The schema is the type, and `I`'s `Deserialize` is the only check a
+    /// call's arguments go through: no JSON Schema validator runs. So do
+    /// not put on `I` a `schemars` attribute that Serde does not enforce
+    /// (`range`, `length`, `pattern`): the schema would advertise a limit
+    /// that a call can break and still reach the function. A value limit
+    /// belongs in a field type whose `Deserialize` refuses what breaks it.
+    ///
     /// ```
     /// use cw_mcp::{Access, Tool};
     /// use serde_json::json;
