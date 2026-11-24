@@ -37,6 +37,8 @@ if let Some(warning) = warning { eprintln!("warning: {warning}") }
 
 - **Identifiers only.** A line holds the time, surface, actor, command name, status,
   target, stable error code and duration: never an argument value or an error message.
+  The actor is the client's claim, recorded only when it is an identifier (at most 64 bytes
+  of ASCII letters, digits and `.` `_` `-` `@` `+` `:` `/`), else as `<invalid>`.
 - **Its own lock.** Appends go through `cw_fs::append` under `<root>/.audit.lock`, never a
   program's own lock, so a command that timed out on that lock still records its failure.
 - **Fails open.** A line that cannot be written never fails the command; the crate prints
@@ -50,7 +52,8 @@ if let Some(warning) = warning { eprintln!("warning: {warning}") }
 `Env::capture()` is called once, in `main`. The presentation variables live in the same
 snapshot: `NO_COLOR`, `TERM`, `<APP>_FORMAT`, `<APP>_LOG`. An empty value reads as unset.
 `Debug` shows variable names only, never values. `scripts/check-dependency-direction.sh`
-fails when any source file outside `src/env/` names `std::env`.
+fails when a file under `src/` outside `src/env/` names `std::env`; it scans `src/` only, so
+tests and examples may read the environment.
 
 ## Errors
 
