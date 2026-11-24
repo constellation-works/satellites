@@ -13,7 +13,7 @@
 #      and the workspace's `-D warnings` refuses one in a public signature
 #      (`private_interfaces`), so nothing from wire/ reaches the public API.
 # Line comments are not searched, so documentation may name either crate.
-# No compile. Needs find, sed, tr and grep.
+# No compile. Needs find, sort, cat, sed, tr and grep.
 
 set -u
 
@@ -27,10 +27,10 @@ fail() {
   status=1
 }
 
-# statements <file>: the Rust source with line comments removed, whitespace
+# statements <text>: Rust source with line comments removed, whitespace
 # collapsed, and one statement (up to `;`, `{` or `}`) per line.
 statements() {
-  sed 's://.*$::' "$1" | tr '\n\t' '  ' | tr -s ' ' | tr ';{}' '\n\n\n'
+  printf '%s\n' "$1" | sed 's://.*$::' | tr '\n\t' '  ' | tr -s ' ' | tr ';{}' '\n\n\n'
 }
 
 # A crate path through rmcp or tokio, or a `use` of either.
@@ -38,25 +38,32 @@ named='(^|[^A-Za-z0-9_:])(::)?(rmcp|tokio)( ?::|[^A-Za-z0-9_]*$)'
 # `pub` not followed by `(`: visible outside the crate.
 public='(^|[^A-Za-z0-9_])pub( [^(]|$)'
 
-files=$(find "$src" -name '*.rs' -print | LC_ALL=C sort)
-for file in $files; do
+# One path per line, so a path with spaces is read whole. A listing that
+# fails, or finds no source, is a failure: a check that read nothing must
+# not pass.
+files=$(find "$src" -name '*.rs' -print) ||
+  { printf 'mcp private runtime: cannot run: cannot list %s\n' "$src" >&2; exit 2; }
+[ -n "$files" ] ||
+  { printf 'mcp private runtime: cannot run: no Rust source under %s\n' "$src" >&2; exit 2; }
+
+# The loop runs in a subshell (it reads a pipe), so it hands its status out.
+printf '%s\n' "$files" | LC_ALL=C sort | {
+while IFS= read -r file; do
   relative=${file#"$root"/}
+  source=$(cat -- "$file") || { fail "cannot read $relative"; continue; }
   case "$file" in
-    "$src"/wire/*)
-      statements "$file" | grep -E "$public" | sed 's/^ *//' | cut -c1-160 |
-        while IFS= read -r statement; do
-          printf 'mcp private runtime: FAIL: %s is public in wire/: %s\n' "$relative" "$statement" >&2
-        done
-      statements "$file" | grep -qE "$public" && status=1
-      ;;
-    *)
-      statements "$file" | grep -E "$named" | sed 's/^ *//' | cut -c1-160 |
-        while IFS= read -r statement; do
-          printf 'mcp private runtime: FAIL: %s names rmcp or tokio outside wire/: %s\n' "$relative" "$statement" >&2
-        done
-      statements "$file" | grep -qE "$named" && status=1
-      ;;
+    "$src"/wire/*) pattern=$public; why='is public in wire/' ;;
+    *) pattern=$named; why='names rmcp or tokio outside wire/' ;;
   esac
+  hits=$(statements "$source" | grep -E "$pattern" | sed 's/^ *//' | cut -c1-160)
+  [ -n "$hits" ] || continue
+  printf '%s\n' "$hits" | while IFS= read -r statement; do
+    printf 'mcp private runtime: FAIL: %s %s: %s\n' "$relative" "$why" "$statement" >&2
+  done
+  status=1
 done
 [ "$status" -eq 0 ] || fail "keep rmcp and tokio inside crates/cw-mcp/src/wire/, and nothing there plain pub"
+exit "$status"
+} || status=1
+
 exit "$status"
