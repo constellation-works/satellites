@@ -1,6 +1,6 @@
 //! A client end of an in-memory connection to a server, for wire tests.
 
-use super::serve::{runtime, serve};
+use super::serve::{run, runtime, serve};
 use crate::error::Result;
 use crate::server::Server;
 use std::io;
@@ -31,11 +31,10 @@ impl DuplexClient {
         deadline: Duration,
     ) -> Result<Self> {
         let (client, server_end) = tokio::io::duplex(BUFFER);
-        let server_runtime = runtime()?;
         let (done, served) = mpsc::channel();
         thread::spawn(move || {
             let (input, output) = tokio::io::split(server_end);
-            let result = server_runtime.block_on(serve(server, input, output));
+            let result = run(|| serve(server, input, output));
             // The client may be gone already; then nobody is waiting.
             let _ = done.send(result);
         });

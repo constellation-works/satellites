@@ -20,6 +20,12 @@ use cw_app::Runtime;
 /// calling thread: the server runs on a runtime of its own, and each call
 /// runs its tool's function on a blocking thread.
 ///
+/// Shutdown is bounded. Once the input closes, answers still in flight get
+/// up to 5 s to be written, and a tool function still running after that
+/// gets 2 s more; then it is abandoned on its thread, its answer is never
+/// sent, and this returns. A function that changes data should finish its
+/// change, or leave it whole, without relying on running to the end.
+///
 /// # Errors
 ///
 /// [`crate::Error::DuplicateTool`] or [`crate::Error::InputSchema`] when the

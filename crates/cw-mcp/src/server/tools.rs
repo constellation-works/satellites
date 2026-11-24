@@ -63,7 +63,9 @@ impl<S: Send + Sync + 'static> Server<S> {
     }
 
     /// Serve over standard input and output until the client closes its
-    /// input, then return. Blocks the calling thread.
+    /// input, then return. Blocks the calling thread. Shutdown is bounded as
+    /// [`crate::serve_stdio`] describes: a tool function still running is
+    /// abandoned rather than waited for.
     ///
     /// Standard output carries the protocol: nothing else in the process may
     /// write to it while the server runs.

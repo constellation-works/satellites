@@ -59,6 +59,10 @@ cw_mcp::serve_stdio(ServerInfo::new("notes", "0.1.0", "notes_internal"), runtime
   with the request's id, and no tool runs.
 - **Closing standard input** ends the session: `serve_stdio` returns `Ok(())`, also when the
   client leaves before the handshake.
+- **Shutdown is bounded.** After the input closes, answers in flight get up to 5 s to be
+  written, and a tool function still running gets 2 s more; then it is abandoned on its
+  thread, its answer is never sent, and `serve_stdio` returns. A function that changes data
+  should leave it whole whether or not it runs to the end.
 
 ## Tests in a project
 
