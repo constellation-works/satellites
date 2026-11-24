@@ -47,15 +47,22 @@ cw-app: env
 
 # crate: the one folder under its src/ that may ask what a stream is
 # attached to (a terminal test, a terminal size) or name the variables that
-# decide colour. A second place would make a second, disagreeing decision
-# (STD-01 R17), so any other file of the crate that does fails.
-# cw-cli decides once, in src/terminal/, and reads no variable itself.
+# decide colour and width. A second place would make a second, disagreeing
+# decision (STD-01 R17), so any other file of the crate's src/ or examples/
+# that does fails. cw-cli decides once, in src/terminal/, and reads no
+# variable itself.
+#
+# This is a grep tripwire, not a parser: it finds the names in each
+# statement with its line comments removed, so a name that follows a `//`
+# inside a string on the same line (a URL, say) is not seen. Review covers
+# that case.
 TERMINAL='
 cw-cli: terminal
 '
 # What counts as asking: the std and libc terminal tests, a terminal size or
-# termios query, the colour variables, and cw-app's readers of them.
-terminal_state='is_terminal|IsTerminal|isatty|tcgetwinsize|termios|NO_COLOR|CLICOLOR_FORCE|(^|[^A-Za-z0-9_])TERM([^A-Za-z0-9_]|$)|\.no_color ?\(|\.term ?\('
+# termios query, the colour and width variables, and cw-app's readers of
+# them.
+terminal_state='is_terminal|IsTerminal|isatty|tcgetwinsize|termios|NO_COLOR|CLICOLOR_FORCE|(^|[^A-Za-z0-9_])(TERM|COLUMNS)([^A-Za-z0-9_]|$)|\.no_color ?\(|\.term ?\('
 
 root=${1:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)} || exit 2
 [ -f "$root/Cargo.toml" ] || { printf 'dependency direction: cannot run: no %s/Cargo.toml\n' "$root" >&2; exit 2; }
@@ -142,7 +149,7 @@ while IFS=$tab read -r crate dir deps; do
   done
   home=$(row "$TERMINAL" "$crate")
   [ -n "$home" ] || continue
-  hits=$(find "$dir/src" -path "$dir/src/$home" -prune -o -name '*.rs' -print 2>/dev/null | LC_ALL=C sort |
+  hits=$(find "$dir/src" "$dir/examples" -path "$dir/src/$home" -prune -o -name '*.rs' -print 2>/dev/null | LC_ALL=C sort |
     while IFS= read -r file; do
       statements "$file" | grep -E "$terminal_state" | sed 's/^ *//' |
         while IFS= read -r statement; do
