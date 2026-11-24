@@ -18,8 +18,10 @@ pub fn sh(script: &str, args: &[&str]) -> Command {
     command
 }
 
-/// Kills, on drop, every process id it was told of and the one written in
-/// each pid file it watches, whether the test passed or panicked.
+/// Kills, on drop, every process id it was told of and not since found gone,
+/// and the one written in each pid file it watches, whether the test passed
+/// or panicked. Declare it after anything it reads (a pid file's temporary
+/// directory), so it drops first.
 #[derive(Default)]
 pub struct Reaper {
     pids: Vec<i32>,
@@ -33,6 +35,16 @@ impl Reaper {
 
     pub fn pid_file(&mut self, path: PathBuf) {
         self.pid_files.push(path);
+    }
+
+    /// Whether `pid` is gone within `within`. A pid found gone is forgotten,
+    /// so the drop never signals an id that may since have been reused.
+    pub fn gone_within(&mut self, pid: i32, within: Duration) -> bool {
+        let gone = gone_within(pid, within);
+        if gone {
+            self.pids.retain(|&p| p != pid);
+        }
+        gone
     }
 }
 
@@ -61,7 +73,7 @@ pub fn pids(text: &[u8]) -> Vec<i32> {
 
 /// Whether `pid` is gone within `within`. A killed descendant is reparented
 /// and reaped by init, so it may linger briefly as a zombie.
-pub fn gone_within(pid: i32, within: Duration) -> bool {
+fn gone_within(pid: i32, within: Duration) -> bool {
     let Some(pid) = Pid::from_raw(pid) else {
         return true;
     };

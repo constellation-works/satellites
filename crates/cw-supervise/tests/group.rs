@@ -3,14 +3,14 @@
 //! Every run has an explicit deadline, and every process a test learns of is
 //! killed by a [`Reaper`] on drop, so a failed assertion leaves none behind.
 
-#![cfg(unix)]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 mod support;
 
 use cw_supervise::{End, Error, Run};
 use std::process::Command;
 use std::time::{Duration, Instant};
-use support::{Reaper, TestResult, gone_within, pids, sh};
+use support::{Reaper, TestResult, pids, sh};
 
 /// How long a killed descendant may take to be reaped by init.
 const REAPED_WITHIN: Duration = Duration::from_secs(2);
@@ -63,7 +63,10 @@ fn children_that_ignore_sigterm_are_killed_after_the_grace() -> TestResult {
         "{elapsed:?}"
     );
     for pid in ids {
-        assert!(gone_within(pid, REAPED_WITHIN), "{pid} survived the sweep");
+        assert!(
+            reaper.gone_within(pid, REAPED_WITHIN),
+            "{pid} survived the sweep"
+        );
     }
     Ok(())
 }
@@ -86,7 +89,7 @@ fn a_background_grandchild_is_swept_after_a_clean_exit() -> TestResult {
         return Err(format!("expected one pid: {outcome:?}").into());
     };
     assert!(
-        gone_within(*grandchild, REAPED_WITHIN),
+        reaper.gone_within(*grandchild, REAPED_WITHIN),
         "the grandchild survived"
     );
     Ok(())
@@ -94,21 +97,38 @@ fn a_background_grandchild_is_swept_after_a_clean_exit() -> TestResult {
 
 #[test]
 fn a_pipe_held_outside_the_group_is_incomplete_with_the_real_status() -> TestResult {
-    let mut reaper = Reaper::default();
+    // Declared before the reaper, so the reaper drops first and can still
+    // read the pid file.
     let scratch = tempfile::tempdir()?;
     let pid_file = scratch.path().join("escaped.pid");
+    let mut reaper = Reaper::default();
     reaper.pid_file(pid_file.clone());
-    // perl leaves the group with setsid, records its pid, and keeps the
-    // inherited stdout and stderr open. The shell exits 3 once it has.
+    // perl forks a process that leaves the group with setsid, records its
+    // pid, and keeps the inherited stdout and stderr open. The leader waits
+    // on a pipe until it has, then exits 3. No polling, no further fork.
     let script = r#"
-        perl -MPOSIX -e 'POSIX::setsid() or die "setsid: $!"; open(my $f, ">", $ARGV[0]) or die; print $f "$$\n"; close $f; sleep 30' "$1" &
-        while [ ! -s "$1" ]; do sleep 0.01; done
-        echo before
-        exit 3
+        pipe(my $r, my $w) or die "pipe: $!";
+        my $pid = fork() // die "fork: $!";
+        if ($pid == 0) {
+            close $r;
+            POSIX::setsid() or die "setsid: $!";
+            open(my $f, ">", $ARGV[0]) or die "open: $!";
+            print $f "$$\n";
+            close $f;
+            syswrite $w, "x";
+            close $w;
+            sleep 30;
+            exit 0;
+        }
+        close $w;
+        sysread $r, my $ready, 1;
+        print "before\n";
+        exit 3;
     "#;
-    let path = pid_file.to_str().ok_or("temporary path is not UTF-8")?;
+    let mut command = Command::new("perl");
+    command.arg("-MPOSIX").arg("-e").arg(script).arg(&pid_file);
     let started = Instant::now();
-    let outcome = Run::new(sh(script, &[path]), Duration::from_secs(20)).run()?;
+    let outcome = Run::new(command, Duration::from_secs(20)).run()?;
     let elapsed = started.elapsed();
 
     assert!(
@@ -122,6 +142,37 @@ fn a_pipe_held_outside_the_group_is_incomplete_with_the_real_status() -> TestRes
         elapsed < Duration::from_secs(6),
         "bounded by the drain wait: {elapsed:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn a_leader_the_group_signal_cannot_reach_is_reported_unswept() -> TestResult {
+    let mut reaper = Reaper::default();
+    // The leader moves itself into this test process's group, so its own
+    // group is empty and the group signals fail. The run must still end,
+    // bounded, and say the cleanup was not verified.
+    let script = r#"
+        setpgrp(0, getpgrp(getppid())) or die "setpgrp: $!";
+        $| = 1;
+        print "$$\n";
+        sleep 30;
+    "#;
+    let mut command = Command::new("perl");
+    command.arg("-e").arg(script);
+    let started = Instant::now();
+    let outcome = Run::new(command, Duration::from_millis(500))
+        .grace(Duration::from_millis(100))
+        .run()?;
+    let elapsed = started.elapsed();
+    let ids = pids(&outcome.stdout.bytes);
+    for &pid in &ids {
+        reaper.pid(pid);
+    }
+
+    assert!(matches!(outcome.end, End::TimedOut), "{outcome:?}");
+    assert_eq!(ids.len(), 1, "the leader's pid: {outcome:?}");
+    assert!(!outcome.swept, "the group signal failed: {outcome:?}");
+    assert!(elapsed < Duration::from_secs(5), "bounded: {elapsed:?}");
     Ok(())
 }
 

@@ -2,7 +2,7 @@
 //! public API. Every run has an explicit deadline; the crate's own guard
 //! sweeps what it starts.
 
-#![cfg(unix)]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 mod support;
 
@@ -123,5 +123,28 @@ fn input_larger_than_a_pipe_buffer_is_delivered() -> TestResult {
     assert!(exited_ok(&outcome), "{outcome:?}");
     assert!(!outcome.stdout.truncated && outcome.stdout.complete);
     assert!(outcome.stdout.bytes == input, "the input came back whole");
+    Ok(())
+}
+
+#[test]
+fn durations_too_large_to_add_are_no_bound_rather_than_a_panic() -> TestResult {
+    // A deadline of Duration::MAX never passes: the child exits on its own.
+    let exits = Run::new(sh("exit 0", &[]), Duration::MAX)
+        .grace(Duration::MAX)
+        .run()?;
+    assert!(exited_ok(&exits), "{exits:?}");
+
+    // A grace of Duration::MAX after a real deadline: SIGTERM ends the
+    // leader, and the grace ends with it.
+    let started = Instant::now();
+    let stopped = Run::new(sh("exec sleep 30", &[]), Duration::from_millis(100))
+        .grace(Duration::MAX)
+        .run()?;
+    assert!(matches!(stopped.end, End::TimedOut), "{stopped:?}");
+    assert!(stopped.swept, "{stopped:?}");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the grace ended"
+    );
     Ok(())
 }
