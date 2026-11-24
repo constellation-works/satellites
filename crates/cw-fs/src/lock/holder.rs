@@ -193,8 +193,9 @@ fn encode(pid: u32, start: Option<u64>, time: &str, label: &str) -> String {
     out.push_str("\"time\":");
     push_string(&mut out, time, usize::MAX);
     out.push_str(",\"label\":");
-    // What follows the label: its closing quote, the brace, the newline.
-    let budget = RECORD_CAP.saturating_sub(out.len() + 3);
+    // Around the label's body: its two quotes, then the brace and the
+    // newline.
+    let budget = RECORD_CAP.saturating_sub(out.len() + 4);
     push_string(&mut out, label, budget);
     out.push_str("}\n");
     out
