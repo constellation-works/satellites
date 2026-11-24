@@ -85,12 +85,34 @@ fn read_tally(path: &Path) -> Result<u64, TallyError> {
     Ok(String::from_utf8_lossy(&bytes).trim().parse().unwrap_or(0))
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let scratch = tempfile::tempdir()?;
+/// The tally to start from: `None` when the variable is unset, an error
+/// naming it when it is set to anything but a whole number.
+fn start_from(env: &Env) -> Result<Option<u64>, String> {
+    let app = env.app("tally");
+    let Some(value) = app.get(&START) else {
+        return Ok(None);
+    };
+    value
+        .to_str()
+        .and_then(|text| text.parse::<u64>().ok())
+        .map(Some)
+        .ok_or_else(|| {
+            format!(
+                "{} must be a whole number, not {value:?}",
+                START.name_for(app.name())
+            )
+        })
+}
 
-    // main reads the environment once; the data directory is a pure
-    // function of that value (here an explicit root, as `--root` would be).
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // main reads the environment once, and refuses a value it cannot use
+    // before it creates anything or prints anything.
     let env = Env::capture();
+    let start = start_from(&env)?;
+
+    // The data directory is a pure function of the captured value (here an
+    // explicit root, as `--root` would be).
+    let scratch = tempfile::tempdir()?;
     let root = env
         .app("tally")
         .data_dir(Some(&scratch.path().join("data")))?;
@@ -108,10 +130,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     writeln!(out, "{}", table("tally", &[START]))?;
 
     // A fresh data directory starts from TALLY_START when it is set.
-    let start = env
-        .app("tally")
-        .get(&START)
-        .and_then(|value| value.to_str()?.parse::<u64>().ok());
     if let Some(start) = start {
         cw_fs::write_atomic(&runtime.state().tally, start.to_string().as_bytes())?;
     }
