@@ -279,6 +279,23 @@ fn an_actor_that_is_not_an_identifier_is_never_written_verbatim() -> TestResult 
         record.actor.as_deref(),
         Some(cw_app::audit::ACTOR_PLACEHOLDER)
     );
+
+    // The same rule holds for a record appended to the log directly.
+    let mut direct = record.clone();
+    direct.actor = Some(claim);
+    runtime
+        .audit_log()
+        .append(&direct, std::time::Duration::from_secs(1))?;
+    let text = std::fs::read_to_string(runtime.audit_log().path())?;
+    assert!(!text.contains(SECRET_ARG));
+    let lines = runtime.audit_log().read(Cap::bytes(1 << 16))?;
+    let [Ok(_), Ok(appended)] = lines.as_slice() else {
+        panic!("two readable lines expected, got {lines:?}");
+    };
+    assert_eq!(
+        appended.actor.as_deref(),
+        Some(cw_app::audit::ACTOR_PLACEHOLDER)
+    );
     Ok(())
 }
 

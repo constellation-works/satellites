@@ -5,6 +5,7 @@
 //! before this crate already hold: format 1 had no actor, format 2 no
 //! surface. Reading them through the steps below keeps such a log readable.
 
+use super::actor::recorded;
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -85,7 +86,18 @@ struct Probe {
 }
 
 /// `record` as one newline-terminated JSON line in the newest format.
+///
+/// The actor is written only when it reads as an identifier, and as
+/// [`super::ACTOR_PLACEHOLDER`] otherwise, whoever built the record.
 pub(super) fn encode(record: &Record) -> Result<Vec<u8>> {
+    let actor = record.actor.as_deref().map(recorded);
+    let record = match actor {
+        Some(actor) if Some(actor) != record.actor.as_deref() => &Record {
+            actor: Some(actor.to_owned()),
+            ..record.clone()
+        },
+        _ => record,
+    };
     let mut bytes = serde_json::to_vec(&Line {
         format: FORMAT,
         record,
