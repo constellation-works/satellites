@@ -10,7 +10,11 @@ pub const SUMMARY_LIMIT: usize = 70;
 
 /// Check every subcommand of `cmd`, at every depth: its summary (the first
 /// line of its `about`) is not empty and is at most `limit` characters.
-/// Clap's own `help` subcommand is skipped.
+///
+/// A subcommand named `help` is skipped, whoever declared it: the check
+/// knows a command by its name only, so it cannot tell clap's generated
+/// `help` from one the program declared itself. A program that declares its
+/// own `help` (with clap's disabled) checks that summary itself.
 ///
 /// A program's test calls it on its assembled parser:
 ///
