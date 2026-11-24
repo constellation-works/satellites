@@ -19,6 +19,7 @@ use cw_base::{Error, Kind};
 use cw_cli::help::{Group, grouped};
 use cw_cli::{Cell, Column, Exit, Format, Logging, Role, Sink, Table, Terminal};
 use serde::Serialize;
+use std::io::Write;
 use std::process::ExitCode;
 
 const APP: &str = "notes";
@@ -48,9 +49,11 @@ const NOTES: &[Note] = &[
 
 /// The program's own typed error, translated once with its own codes.
 #[derive(Debug, thiserror::Error)]
-enum NotesError {
+pub enum NotesError {
+    /// No note has the id given.
     #[error("no note named {0:?}")]
     NotFound(String),
+    /// Writing the output failed.
     #[error(transparent)]
     Output(#[from] cw_cli::Error),
 }
@@ -64,7 +67,8 @@ impl From<NotesError> for Error {
     }
 }
 
-fn cli() -> Command {
+/// The program's parser.
+pub fn cli() -> Command {
     let format = Arg::new("format")
         .long("format")
         .global(true)
@@ -109,7 +113,11 @@ fn main() -> ExitCode {
     .into()
 }
 
-fn run(sink: &mut Sink, matches: &ArgMatches) -> Result<(), NotesError> {
+/// Run the command `matches` names, writing through `sink`.
+pub fn run<O: Write, E: Write>(
+    sink: &mut Sink<O, E>,
+    matches: &ArgMatches,
+) -> Result<(), NotesError> {
     match matches.subcommand() {
         Some(("show", args)) => {
             let id = args.get_one::<String>("id").map_or("", String::as_str);
@@ -121,7 +129,11 @@ fn run(sink: &mut Sink, matches: &ArgMatches) -> Result<(), NotesError> {
         }
         _ => {
             sink.emit(NOTES, table)?;
-            sink.notice(&format!("{} notes", NOTES.len()));
+            // A reader that went away gets silence, on stderr too (STD-01
+            // R13): the count is for a human still reading.
+            if !sink.is_closed() {
+                sink.notice(&format!("{} notes", NOTES.len()));
+            }
         }
     }
     Ok(())

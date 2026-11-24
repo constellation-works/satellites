@@ -4,6 +4,11 @@ use cw_app::Env;
 use cw_cli::{Error, Exit, Format, Probe, Sink, Table, Terminal};
 use std::io::{self, Write};
 
+/// The example program, so its own command path runs against a closed reader.
+#[allow(dead_code)]
+#[path = "../examples/notes.rs"]
+mod notes;
+
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 /// A reader that has gone away: every write is a broken pipe.
@@ -95,5 +100,18 @@ fn a_write_that_takes_nothing_fails_finish_and_an_interrupted_flush_is_retried()
         sink.into_parts().0.flushed,
         "the interrupted flush is retried"
     );
+    Ok(())
+}
+
+#[test]
+fn the_example_list_is_silent_on_stderr_after_its_reader_goes_away() -> TestResult {
+    let terminal = Terminal::decide(&Env::default(), "notes", Probe::piped(), None);
+    let mut sink = Sink::new(terminal, Closed { attempts: 0 }, Vec::new());
+    let matches = notes::cli().try_get_matches_from(["notes", "list"])?;
+    let outcome = notes::run(&mut sink, &matches);
+    assert!(outcome.is_ok(), "{outcome:?}");
+    sink.finish()?;
+    let (_, err) = sink.into_parts();
+    assert_eq!(String::from_utf8(err)?, "", "nothing on stderr");
     Ok(())
 }
