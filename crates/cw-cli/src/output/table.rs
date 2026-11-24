@@ -170,8 +170,14 @@ impl Table {
     }
 
     /// The table as aligned lines with a header, fitted to `width` when one
-    /// is given, each line ending in `\n`.
+    /// is given, each line ending in `\n`. A table with no records is
+    /// nothing, not a lone header: stdout stays empty for a query that
+    /// matched nothing (STD-01 R16), and the line saying so is the caller's,
+    /// on stderr.
     pub(crate) fn render(&self, width: Option<usize>, color: bool) -> String {
+        if self.rows.is_empty() {
+            return String::new();
+        }
         let header: Vec<(String, Role)> = self
             .columns
             .iter()

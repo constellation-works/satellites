@@ -44,6 +44,8 @@ asks, and `scripts/check-dependency-direction.sh` fails when one does.
   numbers right-aligned (`Column::right`), `-` for an absent cell. Widths are measured in
   display columns, so a wide character counts two. Only a column marked `truncatable` is
   cut, only on a terminal, and a cut value ends in a single `…`.
+- A list with no records writes nothing to stdout in a table or piped (no lone header) and
+  `[]` in JSON; the line on stderr naming what was searched is the program's.
 - Piped, the same rows are tab-separated lines with no header.
 - Every control character in a value is written as a visible escape (`\n`, `\t`, `\u{1b}`),
   so a value cannot break its line or reach the terminal as control. JSON escapes its own.

@@ -6,7 +6,8 @@
 //! rendering comes from the same value (STD-01 R6):
 //!
 //! - [`Mode::Table`]: a borderless table ([`Table`]), fitted to the
-//!   terminal's width when there is one;
+//!   terminal's width when there is one, and nothing at all when it has no
+//!   rows;
 //! - [`Mode::Plain`]: the same rows, tab-separated, with no header;
 //! - [`Mode::Json`]: the payload as one JSON document.
 //!

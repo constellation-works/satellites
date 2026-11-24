@@ -152,3 +152,18 @@ fn control_characters_in_a_value_are_escaped() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn an_empty_list_writes_no_header_and_json_still_writes_its_array() -> TestResult {
+    for (probe, format, expected) in [
+        (Probe::terminal(None), None, ""),
+        (Probe::piped(), None, ""),
+        (Probe::piped(), Some(Format::Json), "[]\n"),
+    ] {
+        let mut sink = sink(probe, format);
+        sink.emit(&NOTES[..0], table)?;
+        sink.finish()?;
+        assert_eq!(String::from_utf8(sink.into_parts().0)?, expected);
+    }
+    Ok(())
+}
