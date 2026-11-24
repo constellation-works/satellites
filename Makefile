@@ -1,4 +1,4 @@
-.PHONY: help build test fmt fmt-check clippy deny standards-check ci-fast ci-lint ci clean
+.PHONY: help build test fmt fmt-check clippy doc deny standards-check dependency-direction ci-fast ci-lint ci clean
 
 CARGO ?= cargo
 # Every build uses the committed Cargo.lock as is; a stale lock fails instead
@@ -29,10 +29,11 @@ endef
 help:
 	@echo "satellites make targets"
 	@echo ""
-	@echo "  make ci-fast          Pre-handoff gate, no compile: fmt, standards-check"
-	@echo "  make ci-lint          clippy -D warnings + cargo-deny (skipped locally if not installed)"
+	@echo "  make ci-fast          Pre-handoff gate, no compile: fmt, standards-check, dependency-direction"
+	@echo "  make ci-lint          clippy -D warnings, rustdoc -D warnings, cargo-deny (skipped locally if not installed)"
 	@echo "  make test             All tests (nextest when installed, else cargo test) + doctests"
 	@echo "  make standards-check  Run the vendored standards check (docs/standards/check.sh)"
+	@echo "  make dependency-direction  Check which kit crates each crate may depend on"
 	@echo "  make ci               Everything above; what CI runs"
 	@echo "  make build | fmt | clean"
 
@@ -48,6 +49,10 @@ fmt-check:
 clippy:
 	$(CARGO) clippy --workspace --all-targets $(LOCKED) -- -D warnings
 
+# Every public item is documented and its docs build without a warning.
+doc:
+	RUSTDOCFLAGS="-D warnings" $(CARGO) doc --workspace --no-deps $(LOCKED)
+
 # Supply chain (STD-02 R23, STD-05 R23/R24): advisories, licenses, sources.
 deny:
 	@if $(CARGO) deny --version >/dev/null 2>&1; then \
@@ -58,11 +63,11 @@ deny:
 
 # nextest enforces per-test timeouts (STD-03 R21/R22); plain cargo test does
 # not, so the fallback says so. nextest does not run doctests, so they are a
-# second leg. Until the first crate lands the workspace has no tests, so the
-# zero-test check is off; turn on `--no-tests=fail` with the first crate.
+# second leg. A run that finds no test fails, so a filter or a build change
+# that drops every test cannot pass silently.
 test:
 	@if $(CARGO) nextest --version >/dev/null 2>&1; then \
-		$(CARGO) nextest run --workspace --all-targets $(LOCKED) --no-tests=pass; \
+		$(CARGO) nextest run --workspace --all-targets $(LOCKED) --no-tests=fail; \
 	else \
 		$(call missing_tool,cargo-nextest,per-test timeouts); \
 		$(CARGO) test --workspace --all-targets $(LOCKED); \
@@ -82,10 +87,15 @@ standards-check:
 		echo "warning: standards not vendored (no docs/standards/check.sh); skipping." >&2; \
 	fi
 
-# Pre-handoff gate for agents: no compile (STD-04 R12).
-ci-fast: fmt-check standards-check
+# The kit crates depend on each other only as the script's table allows,
+# and cw-base names no file, environment or process API. No compile.
+dependency-direction:
+	sh scripts/check-dependency-direction.sh
 
-ci-lint: clippy deny
+# Pre-handoff gate for agents: no compile (STD-04 R12).
+ci-fast: fmt-check standards-check dependency-direction
+
+ci-lint: clippy doc deny
 
 # Full pass. Keep aligned with .github/workflows/ci.yml.
 ci: ci-fast ci-lint test

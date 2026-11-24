@@ -1,0 +1,23 @@
+[package]
+name = "cw-fs"
+version = "0.1.0"
+description = "Durable, owner-only file access and one advisory lock with a deadline, for a CLI's private data directory."
+readme = "README.md"
+keywords = ["atomic-write", "file-lock", "flock", "fsync", "cli"]
+categories = ["filesystem"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# cw-fs depends on cw-base only (scripts/check-dependency-direction.sh).
+[dependencies]
+cw-base.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+[lints]
+workspace = true
