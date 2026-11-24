@@ -10,6 +10,7 @@ no record and no file name.
 | `create_new(path, bytes)` | The same, but never replaces anything |
 | `append(path, line)` | One `write` call and a sync; a short write is an error and may leave a prefix; creates the file `0600` when absent |
 | `read(path, Cap)` | The whole file, refused past the cap; never a link, FIFO or device |
+| `read_tail(path, Cap)` | The last `Cap` bytes, however large the file; may start mid-line; opened and checked as `read` |
 | `list(dir)` | Sorted names; an absent directory is empty; `.DS_Store` and `._*` left out |
 | `remove(path)` | Remove a regular file and sync the directory |
 | `create_private_dir(path)` | `0700`, each new component |

@@ -22,10 +22,12 @@ mod append;
 mod open;
 mod read;
 mod remove;
+mod tail;
 mod write;
 
 pub use append::append;
 pub(crate) use open::{Access, judge as open_regular_judge, open_regular};
 pub use read::{Cap, read};
 pub use remove::remove;
+pub use tail::read_tail;
 pub use write::{create_new, write_atomic};
