@@ -6,9 +6,9 @@ use crate::server::Shared;
 use cw_app::{Origin, Surface};
 use cw_base::Kind;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResponse, CallToolResult, Implementation, InitializeResult,
-    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
-    ToolAnnotations,
+    CallToolRequestParams, CallToolResponse, CallToolResult, CustomRequest, CustomResult,
+    ErrorCode, Implementation, InitializeResult, ListToolsResult, PaginatedRequestParams,
+    ServerCapabilities, ServerConfig, Tool, ToolAnnotations,
 };
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData, ServerHandler};
@@ -62,6 +62,32 @@ impl<S: Send + Sync + 'static> ServerHandler for Handler<S> {
         Ok(ListToolsResult::with_all_items(tools))
     }
 
+    /// A request the SDK could not read as any method it knows. The SDK
+    /// falls back to this for a method it does know when its parameters
+    /// have the wrong shape (`tools/call` with `arguments` that are not an
+    /// object): that is invalid parameters of a method this server serves,
+    /// not a missing method.
+    async fn on_custom_request(
+        &self,
+        request: CustomRequest,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<CustomResult, ErrorData> {
+        if SERVED_METHODS.contains(&request.method.as_str()) {
+            return Err(ErrorData::invalid_params(
+                format!(
+                    "the parameters of `{}` do not have the shape the method takes",
+                    request.method
+                ),
+                None,
+            ));
+        }
+        Err(ErrorData::new(
+            ErrorCode::METHOD_NOT_FOUND,
+            request.method,
+            None,
+        ))
+    }
+
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
@@ -111,6 +137,9 @@ impl<S: Send + Sync + 'static> ServerHandler for Handler<S> {
         Ok(CallToolResponse::Complete(result))
     }
 }
+
+/// The request methods this server answers beyond the handshake.
+const SERVED_METHODS: [&str; 2] = ["tools/list", "tools/call"];
 
 /// The text a panic carried, when it carried text.
 fn panic_message(panic: &(dyn Any + Send)) -> String {

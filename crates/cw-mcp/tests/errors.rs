@@ -93,7 +93,9 @@ fn an_unknown_tool_is_a_protocol_error_and_runs_nothing() {
 fn arguments_that_do_not_match_the_schema_are_a_protocol_error_and_run_nothing() {
     let root = tempfile::tempdir().unwrap();
     let (mut harness, calls, _) = fixture::started(root.path(), "errors-client");
-    for (id, arguments) in [(2, json!({})), (3, json!({"text": 7}))] {
+    // Arguments that are not an object at all fail the SDK's typed request
+    // too; they are still invalid parameters of a known method.
+    for (id, arguments) in [(2, json!({})), (3, json!({"text": 7})), (4, json!(["hi"]))] {
         let reply = harness
             .request(&fixture::call(id, "echo", arguments))
             .unwrap();

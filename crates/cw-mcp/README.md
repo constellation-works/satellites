@@ -55,7 +55,8 @@ cw_mcp::serve_stdio(ServerInfo::new("notes", "0.1.0", "notes_internal"), runtime
 - **A tool that panicked** answers the same way, with kind `internal` and the code given to
   `ServerInfo::new`. The server goes on serving.
 - **A request the server cannot route** (an unknown tool, or arguments that do not match the
-  input schema) is a JSON-RPC error `-32602`, and no tool runs.
+  input schema, including arguments that are not an object) is a JSON-RPC error `-32602`
+  with the request's id, and no tool runs.
 - **Closing standard input** ends the session: `serve_stdio` returns `Ok(())`, also when the
   client leaves before the handshake.
 
