@@ -32,6 +32,18 @@ pub enum Error {
         name: PathBuf,
     },
 
+    /// The golden file, or a directory between it and the goldens folder, is
+    /// a symbolic link. Goldens are never read or written through a link,
+    /// so an update cannot write outside the goldens folder.
+    #[error(
+        "golden path {} is a symbolic link; goldens are not read or written through links",
+        path.display()
+    )]
+    GoldenSymlink {
+        /// The link found.
+        path: PathBuf,
+    },
+
     /// A filesystem operation failed.
     #[error("cannot {action} {}: {source}", path.display())]
     Io {

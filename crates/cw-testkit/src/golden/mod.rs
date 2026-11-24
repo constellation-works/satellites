@@ -68,10 +68,13 @@ impl Goldens {
     /// # Errors
     ///
     /// [`Error::InvalidGoldenName`] if `name` is empty, absolute or contains
-    /// `..`; [`Error::GoldenMissing`] or [`Error::GoldenMismatch`] when
+    /// `..`; [`Error::GoldenSymlink`] if the golden file or a directory
+    /// between it and [`dir`](Self::dir) is a symbolic link, when comparing
+    /// and when updating; [`Error::GoldenMissing`] or [`Error::GoldenMismatch`] when
     /// comparing; [`Error::Io`] if the file cannot be read or written.
     pub fn check(&self, name: impl AsRef<Path>, actual: &str) -> Result<(), Error> {
         let path = self.path_of(name.as_ref())?;
+        self.refuse_links(name.as_ref())?;
         if self.update {
             return write(&path, actual);
         }
@@ -113,6 +116,32 @@ impl Goldens {
         if let Err(err) = self.check(name, actual) {
             panic!("{err}");
         }
+    }
+
+    /// Refuse a symbolic link at any existing step from [`dir`](Self::dir)
+    /// down to the golden file. `name` is already checked to hold only
+    /// normal components. A step that does not exist ends the walk: nothing
+    /// below it exists either.
+    fn refuse_links(&self, name: &Path) -> Result<(), Error> {
+        let mut path = self.dir.clone();
+        for part in name.components() {
+            path.push(part);
+            match std::fs::symlink_metadata(&path) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    return Err(Error::GoldenSymlink { path });
+                }
+                Ok(_) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(source) => {
+                    return Err(Error::Io {
+                        action: "inspect the golden path",
+                        path,
+                        source,
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     fn path_of(&self, name: &Path) -> Result<PathBuf, Error> {

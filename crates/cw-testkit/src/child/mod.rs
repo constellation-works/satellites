@@ -12,11 +12,12 @@ const SYSTEM_PATH: &[&str] = &["/usr/bin", "/bin"];
 #[cfg(not(unix))]
 const SYSTEM_PATH: &[&str] = &[];
 
-/// `program` with the environment cleared and only `HOME`, `PATH` and the
-/// root variable set to `root`'s values.
+/// `program` with the environment cleared, only `HOME`, `PATH` and the root
+/// variable set to `root`'s values, and the working directory at the root.
 pub(crate) fn isolated(program: &OsStr, root: &TempRoot) -> Command {
     let mut cmd = Command::new(program);
-    cmd.env_clear()
+    cmd.current_dir(root.path())
+        .env_clear()
         .env("HOME", root.home())
         .env("PATH", path_value(root))
         .env(root.root_var(), root.app_root());

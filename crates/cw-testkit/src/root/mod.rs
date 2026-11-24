@@ -20,6 +20,10 @@ use crate::child;
 ///
 /// The type is parameterised by the application's environment prefix:
 /// `TempRoot::new("MYAPP")` points `MYAPP_ROOT` at `root/`.
+///
+/// Dropping the root removes it best-effort: a failure (a read-only
+/// directory a test left inside, say) is ignored and the tree stays behind.
+/// Call [`close`](Self::close) to remove it and see the error.
 #[derive(Debug)]
 pub struct TempRoot {
     dir: tempfile::TempDir,
@@ -98,9 +102,30 @@ impl TempRoot {
         self.path().join("elsewhere").join(name)
     }
 
-    /// A command for `program` with an isolated environment.
+    /// Remove the temp root and everything in it, returning what went wrong
+    /// instead of ignoring it as drop does.
     ///
-    /// The environment is cleared, then `HOME` is set to [`home`](Self::home),
+    /// # Errors
+    ///
+    /// [`Error::Io`] if the tree cannot be removed entirely; what could not
+    /// be removed stays at the error's path.
+    pub fn close(self) -> Result<(), Error> {
+        let path = self.path().to_path_buf();
+        self.dir.close().map_err(|source| Error::Io {
+            action: "remove the temp root",
+            path,
+            source,
+        })
+    }
+
+    /// A command for `program` with an isolated environment, run in the temp
+    /// root.
+    ///
+    /// The working directory is [`path`](Self::path), so a child that looks
+    /// upward from its directory (a git discovering a repository, a tool
+    /// searching for its config file) starts inside the fixture, not in the
+    /// checkout the tests run from; the test may set another with
+    /// [`Command::current_dir`]. The environment is cleared, then `HOME` is set to [`home`](Self::home),
     /// `<APP>_ROOT` to [`app_root`](Self::app_root), and `PATH` to
     /// [`bin`](Self::bin) followed by the system's standard program
     /// directories (`/usr/bin:/bin` on Unix). Nothing else is inherited: a

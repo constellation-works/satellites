@@ -3,17 +3,20 @@
 Test isolation for command-line tools: a test that runs a program must not read or write the
 machine it runs on. `cw-testkit` is a dev-dependency that gives each test:
 
-- **`TempRoot`** — a private (`0700`) temporary directory, removed on drop, holding a `home/`,
-  a `bin/` for fake programs and the application's data root (`root/`, left for the program to
-  create). It is parameterised by the application's environment prefix: `TempRoot::new("MYAPP")`
-  points `MYAPP_ROOT` at it.
-- **`TempRoot::command`** — a `std::process::Command` whose environment is cleared, then given
-  only `HOME`, `PATH` (the temp root's `bin/`, then `/usr/bin:/bin`) and `<APP>_ROOT`. The test
-  adds whatever else it names; nothing else is inherited, so a developer's exported variables,
-  colour settings or real data root never reach the program under test.
+- **`TempRoot`** — a private (`0700`) temporary directory holding a `home/`, a `bin/` for fake
+  programs and the application's data root (`root/`, left for the program to create). It is
+  parameterised by the application's environment prefix: `TempRoot::new("MYAPP")` points
+  `MYAPP_ROOT` at it. Drop removes it best-effort and ignores a failure; `close()` removes it
+  and returns the error.
+- **`TempRoot::command`** — a `std::process::Command` run in the temp root, whose environment
+  is cleared, then given only `HOME`, `PATH` (the temp root's `bin/`, then `/usr/bin:/bin`) and
+  `<APP>_ROOT`. The test adds whatever else it names; nothing else is inherited, so a
+  developer's exported variables, colour settings, real data root or surrounding checkout never
+  reach the program under test.
 - **`Goldens`** — compares output with a file under the test's `goldens/` folder. With
   `UPDATE_GOLDENS=1` it rewrites the file instead. A mismatch is an error naming the file and
-  the variable, so a test can collect every stale golden before failing.
+  the variable, so a test can collect every stale golden before failing. A golden is never read
+  or written through a symbolic link, so an update cannot write outside the folder.
   `redact_timestamps` replaces RFC 3339 timestamps with `<timestamp>` first, so the clock
   never makes a golden stale.
 
@@ -58,9 +61,10 @@ against a golden: `cargo run -p cw-testkit --example isolated_child`.
 ## The hostile-environment script
 
 `scripts/hostile-env-test.sh` in this repository runs a whole suite under a read-only decoy
-`HOME` and `XDG_*` tree (with a git config whose hooks leave a marker) and a `TMPDIR` whose
-path has a space and a non-ASCII letter. It then checks that the suite passed, no hook ran, the
-home is unchanged and `TMPDIR` is empty. Copy it into a project and pass the suite's command:
+`HOME` and `XDG_*` tree, the system search paths included (with a git config whose hooks
+leave a marker), and a `TMPDIR` whose path has a space and a non-ASCII letter. It then checks
+that the suite passed, no hook ran, the home is unchanged and `TMPDIR` is empty. A plain read
+of the decoys is not detected; it only finds decoys instead of the developer's files. Copy it into a project and pass the suite's command:
 
 ```sh
 scripts/hostile-env-test.sh cargo test --workspace --locked

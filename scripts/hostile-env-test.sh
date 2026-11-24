@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Run a project's test suite under a hostile environment and show that no
-# test read or wrote the host's state (STD-03 R20).
+# Run a project's test suite under a hostile environment, so a test that
+# reaches for the host's state finds decoys instead, and check that it left
+# no trace (STD-03 R20).
 #
 #   usage: scripts/hostile-env-test.sh <command> [args...]
 #   e.g.:  scripts/hostile-env-test.sh cargo test --workspace --locked
@@ -10,16 +11,21 @@
 #   HOME             a read-only home full of decoys: a shell profile, a git
 #                    config whose hooks write a marker whenever any git reads
 #                    it, and a config, data, state and cache tree;
-#   XDG_*_HOME, XDG_RUNTIME_DIR
-#                    the decoy trees inside that home, read-only too;
+#   XDG_*_HOME, XDG_RUNTIME_DIR, XDG_CONFIG_DIRS, XDG_DATA_DIRS
+#                    decoy trees inside that home, read-only too, so neither
+#                    the per-user directories nor the system search paths
+#                    reach the host's;
 #   TMPDIR           a fresh directory whose path has a space and a non-ASCII
 #                    letter, so a fixture that splits or re-encodes paths
 #                    breaks.
 #
-# Afterwards: the suite passed, no git hook marker exists, the home tree is
-# byte for byte as it was, and TMPDIR holds nothing (every temp root was
-# removed). A test that reaches the home sees decoys, not the developer's
-# files, and a write there fails. Exits 0 only if all of it held.
+# Afterwards it checks that the suite passed, no git hook marker exists, the
+# home tree is byte for byte as it was, and TMPDIR holds nothing (every temp
+# root was removed). Exits 0 only if all of that held.
+#
+# A plain read is not observed: a test that reads the decoy home still
+# passes here. What the run shows is that such a read sees decoys, not the
+# developer's files, and that a write there fails.
 #
 # CARGO_HOME and RUSTUP_HOME are pinned to their current values before HOME
 # moves, so cargo and rustup still find the toolchain and the registry.
@@ -57,13 +63,13 @@ hooks="$scratch/hooks"
 tmp="$scratch/tmp dir é"
 
 mkdir -p "$home/.config/git" "$home/.local/share" "$home/.local/state" \
-    "$home/.cache" "$home/.run" "$hooks" "$tmp"
+    "$home/.cache" "$home/.run" "$home/.config-dirs" "$home/.data-dirs" "$hooks" "$tmp"
 
 # Decoys: what a test would find if it looked at the home.
 printf 'echo "hostile-env: a test sourced the home profile" >&2; exit 97\n' >"$home/.profile"
 cp "$home/.profile" "$home/.bashrc"
 cp "$home/.profile" "$home/.zshrc"
-for dir in .config .local/share .local/state .cache .run; do
+for dir in .config .local/share .local/state .cache .run .config-dirs .data-dirs; do
     printf 'decoy: a test read the host %s\n' "$dir" >"$home/$dir/DECOY"
 done
 for hook in pre-commit prepare-commit-msg commit-msg post-commit post-checkout \
@@ -98,6 +104,8 @@ env HOME="$home" \
     XDG_STATE_HOME="$home/.local/state" \
     XDG_CACHE_HOME="$home/.cache" \
     XDG_RUNTIME_DIR="$home/.run" \
+    XDG_CONFIG_DIRS="$home/.config-dirs" \
+    XDG_DATA_DIRS="$home/.data-dirs" \
     TMPDIR="$tmp" \
     "$@" || status=$?
 
@@ -114,4 +122,4 @@ $leftover"
 if [[ "$failed" -ne 0 ]]; then
     exit 1
 fi
-echo "hostile-env: the suite passed and the host was untouched"
+echo "hostile-env: the suite passed; no git hook ran, the home is unchanged and TMPDIR is empty"

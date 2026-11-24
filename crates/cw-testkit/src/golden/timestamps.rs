@@ -7,7 +7,7 @@ pub const TIMESTAMP_PLACEHOLDER: &str = "<timestamp>";
 ///
 /// A timestamp is `YYYY-MM-DDTHH:MM:SS`, optionally followed by fractional
 /// seconds (`.` and one or more digits), then `Z` or an offset `+HH:MM` /
-/// `-HH:MM`. The shape is matched, not the calendar: `2026-99-99T…Z` is
+/// `-HH:MM`. `T` and `Z` may be lowercase, as RFC 3339 allows. The shape is matched, not the calendar: `2026-99-99T…Z` is
 /// replaced too. Anything else is left as it is.
 ///
 /// ```
@@ -60,18 +60,18 @@ fn timestamp_len(s: &[u8]) -> Option<usize> {
         len += 1 + digits;
     }
     match s.get(len) {
-        Some(b'Z') => Some(len + 1),
+        Some(b'Z' | b'z') => Some(len + 1),
         Some(b'+' | b'-') if shape_at(&s[len + 1..], OFFSET) => Some(len + 1 + OFFSET.len()),
         _ => None,
     }
 }
 
 /// Whether `s` starts with `shape`, where `d` is any ASCII digit and every
-/// other byte stands for itself.
+/// other byte stands for itself, letters in either case.
 fn shape_at(s: &[u8], shape: &[u8]) -> bool {
     s.len() >= shape.len()
         && shape.iter().zip(s).all(|(&want, &got)| match want {
             b'd' => got.is_ascii_digit(),
-            other => got == other,
+            other => got.eq_ignore_ascii_case(&other),
         })
 }

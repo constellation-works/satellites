@@ -47,3 +47,23 @@ fn child_sees_only_the_kit_variables_and_the_named_ones() {
     assert_eq!(seen, expected);
     assert!(!seen.contains_key(inherited));
 }
+
+#[test]
+fn child_runs_in_the_temp_root_unless_the_test_says_otherwise() {
+    let root = TempRoot::new("CWTEST").expect("create temp root");
+    let cwd = |cmd: &mut std::process::Command| {
+        let out = cmd.args(["-c", "pwd -P"]).output().expect("run sh");
+        assert!(out.status.success(), "sh failed: {out:?}");
+        std::path::PathBuf::from(String::from_utf8(out.stdout).expect("utf-8").trim_end())
+    };
+    let canonical = |p: std::path::PathBuf| p.canonicalize().expect("canonical path");
+
+    assert_eq!(
+        cwd(&mut root.command("sh")),
+        canonical(root.path().to_path_buf())
+    );
+    assert_eq!(
+        cwd(root.command("sh").current_dir(root.home())),
+        canonical(root.home())
+    );
+}

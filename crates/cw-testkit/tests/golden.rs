@@ -11,32 +11,55 @@ use cw_testkit::{Error, Goldens, TempRoot, UPDATE_VAR, redact_timestamps};
 const HELPER_DIR: &str = "CWTEST_GOLDEN_DIR";
 const HELPER: &str = "update_helper";
 
-/// The goldens of a test that compares, or `None` when this process runs
-/// with the update variable set (someone regenerating a workspace's goldens),
-/// where a comparison cannot be tested.
-fn comparing_goldens_in(root: &TempRoot) -> Option<Goldens> {
+/// The goldens folder of a comparison test, inside its temp root.
+fn goldens_in(root: &TempRoot) -> Goldens {
     let dir = root.elsewhere("goldens");
     std::fs::create_dir_all(dir.join("out")).unwrap();
-    let goldens = Goldens::new(dir);
-    (!goldens.is_updating()).then_some(goldens)
+    Goldens::new(dir)
+}
+
+/// Whether the comparison test `test` runs its body here. When this process
+/// runs with the update variable set (someone regenerating a workspace's
+/// goldens) it cannot compare, so it runs `test` again in a child, whose
+/// environment the kit clears, requires that run to pass, and returns
+/// `false`.
+fn compares_here(test: &str) -> bool {
+    if !Goldens::new("").is_updating() {
+        return true;
+    }
+    let root = TempRoot::new("CWTEST").unwrap();
+    let out = root
+        .command(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--test-threads", "1"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && stdout.contains("1 passed"),
+        "{test} in comparison mode: {stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    false
 }
 
 #[test]
 fn matching_output_passes() {
-    let root = TempRoot::new("CWTEST").unwrap();
-    let Some(goldens) = comparing_goldens_in(&root) else {
+    if !compares_here("matching_output_passes") {
         return;
-    };
+    }
+    let root = TempRoot::new("CWTEST").unwrap();
+    let goldens = goldens_in(&root);
     std::fs::write(goldens.dir().join("out/list.txt"), "one\ntwo\n").unwrap();
     goldens.check("out/list.txt", "one\ntwo\n").expect("match");
 }
 
 #[test]
 fn differing_output_fails_naming_the_file_and_the_update_variable() {
-    let root = TempRoot::new("CWTEST").unwrap();
-    let Some(goldens) = comparing_goldens_in(&root) else {
+    if !compares_here("differing_output_fails_naming_the_file_and_the_update_variable") {
         return;
-    };
+    }
+    let root = TempRoot::new("CWTEST").unwrap();
+    let goldens = goldens_in(&root);
     let file = goldens.dir().join("out/list.txt");
     std::fs::write(&file, "one\ntwo\n").unwrap();
 
@@ -92,10 +115,11 @@ fn update_helper() {
 
 #[test]
 fn outputs_differing_only_in_timestamps_compare_equal() {
-    let root = TempRoot::new("CWTEST").unwrap();
-    let Some(goldens) = comparing_goldens_in(&root) else {
+    if !compares_here("outputs_differing_only_in_timestamps_compare_equal") {
         return;
-    };
+    }
+    let root = TempRoot::new("CWTEST").unwrap();
+    let goldens = goldens_in(&root);
     let first = "note 1 created 2026-01-02T03:04:05Z\nnote 2 at 2026-01-02T03:04:05.120+09:00\n";
     let second = "note 1 created 2031-12-30T23:59:58Z\nnote 2 at 2031-12-30T23:59:58.999-04:00\n";
     assert_ne!(first, second);
@@ -107,4 +131,47 @@ fn outputs_differing_only_in_timestamps_compare_equal() {
     goldens
         .check("out/notes.txt", &redact_timestamps(second))
         .expect("equal after redaction");
+}
+
+#[test]
+fn lowercase_t_and_z_timestamps_are_redacted() {
+    if !compares_here("lowercase_t_and_z_timestamps_are_redacted") {
+        return;
+    }
+    let root = TempRoot::new("CWTEST").unwrap();
+    let goldens = goldens_in(&root);
+    let first = "at 2026-01-02t03:04:05z\n";
+    let second = "at 2026-01-02t03:04:06Z\n";
+    std::fs::write(goldens.dir().join("out/at.txt"), redact_timestamps(first)).unwrap();
+    goldens
+        .check("out/at.txt", &redact_timestamps(second))
+        .expect("equal after redaction");
+}
+
+#[cfg(unix)]
+#[test]
+fn goldens_are_not_read_through_symbolic_links() {
+    if !compares_here("goldens_are_not_read_through_symbolic_links") {
+        return;
+    }
+    let root = TempRoot::new("CWTEST").unwrap();
+    let goldens = goldens_in(&root);
+    let outside = root.elsewhere("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("list.txt"), "sibling fixture\n").unwrap();
+    std::os::unix::fs::symlink(outside.join("list.txt"), goldens.dir().join("out/list.txt"))
+        .unwrap();
+    std::os::unix::fs::symlink(&outside, goldens.dir().join("linked")).unwrap();
+
+    for name in ["out/list.txt", "linked/list.txt"] {
+        let err = goldens.check(name, "sibling fixture\n").unwrap_err();
+        assert!(
+            matches!(err, Error::GoldenSymlink { .. }),
+            "{name}: {err:?}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(outside.join("list.txt")).unwrap(),
+        "sibling fixture\n"
+    );
 }
