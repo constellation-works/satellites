@@ -28,6 +28,12 @@ pub enum Error {
         path: PathBuf,
     },
     /// Another connection held the database past the lock wait.
+    ///
+    /// It names no holder. SQLite's locks are byte-range locks on the
+    /// database and its `-shm` that record no owner, and recording one beside
+    /// them would be a write by every connection, readers included, which
+    /// readers here never make; the wait is SQLite's own busy handler, so
+    /// there is no point at which this crate could read a record either.
     #[error("{} is locked by another connection; retry when it finishes", path.display())]
     Locked {
         /// The database file.
@@ -175,6 +181,17 @@ pub(crate) fn is_wal_unreadable(e: &rusqlite::Error) -> bool {
     matches!(
         e.sqlite_error_code(),
         Some(ErrorCode::CannotOpen | ErrorCode::ReadOnly)
+    )
+}
+
+/// The error for a step or a write callback that ended its own transaction.
+pub(crate) fn ended_transaction() -> rusqlite::Error {
+    rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
+        Some(String::from(
+            "the transaction was ended by the caller's own COMMIT or ROLLBACK; \
+             transaction control is not allowed inside it",
+        )),
     )
 }
 

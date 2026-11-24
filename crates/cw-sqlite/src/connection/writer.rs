@@ -1,6 +1,7 @@
 //! Opening a read-write connection.
 
-use super::{create_if_missing, get_pragma, resolve, set_pragma};
+use super::files::{header, sidecars};
+use super::{create_if_missing, get_pragma, inspect, open_reader, resolve, set_pragma};
 use crate::error::{Error, Result, is_busy};
 use crate::migration;
 use crate::migration::Step;
@@ -21,9 +22,14 @@ pub(crate) fn open(
     wait: Duration,
     secure_delete: bool,
 ) -> Result<Connection> {
-    create_if_missing(path)?;
+    let real = resolve(path)?;
+    if inspect(&real)? {
+        refuse_newer_without_writing(path, &real, migrations, wait)?;
+    } else {
+        create_if_missing(&real)?;
+    }
     let mut conn = Connection::open_with_flags(
-        resolve(path)?,
+        &real,
         OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
             | OpenFlags::SQLITE_OPEN_NOFOLLOW,
@@ -37,10 +43,11 @@ pub(crate) fn open(
         rusqlite::FileControl::PersistWal(&mut persist),
     )
     .map_err(configure)?;
-    // A database a newer build migrated is refused before anything here
-    // changes it, the journal mode included. Until it passes, closing this
-    // connection must not checkpoint either: a checkpoint after WAL recovery
-    // rewrites the main file, even with the pages it already holds.
+    // Checked again on this connection, for a newer build that migrated
+    // since the probe above, before anything here changes the database, the
+    // journal mode included. Until it passes, closing this connection must
+    // not checkpoint either: a checkpoint after WAL recovery rewrites the
+    // main file, even with the pages it already holds.
     conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)
         .map_err(configure)?;
     migration::refuse_newer(&conn, path, migrations)?;
@@ -54,6 +61,29 @@ pub(crate) fn open(
     }
     migration::run(&mut conn, path, migrations)?;
     Ok(conn)
+}
+
+/// Refuse a database a newer build migrated without opening it for writing,
+/// which would create or rebuild its `-wal` and `-shm`. With nothing in the
+/// WAL the main file's header holds the version; with WAL content and an
+/// index, a [`super::Reader`] reads it and changes nothing. With WAL content
+/// and no index there is no way to read it that writes nothing, so the check
+/// is left to the read-write connection, which recreates the `-shm`.
+fn refuse_newer_without_writing(
+    path: &Path,
+    real: &Path,
+    migrations: &[Step],
+    wait: Duration,
+) -> Result<()> {
+    let sidecars = sidecars(real)?;
+    if !sidecars.wal_has_content {
+        let found = header(real)?.map_or(0, |header| header.user_version);
+        return migration::refuse_past(path, found, migrations).map(|_| ());
+    }
+    if sidecars.shm {
+        return open_reader(path, migrations, wait).map(drop);
+    }
+    Ok(())
 }
 
 /// Put the database in WAL mode, which stays set in the file. SQLite does

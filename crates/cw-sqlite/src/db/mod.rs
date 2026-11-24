@@ -1,7 +1,8 @@
 //! The database a project names once, and the three things it does.
 
 use crate::connection::{Reader, open_reader, open_writer};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ended_transaction};
+use crate::migration;
 use crate::migration::Step;
 use rusqlite::{Transaction, TransactionBehavior};
 use std::path::{Path, PathBuf};
@@ -80,7 +81,13 @@ impl Db {
     /// The connection is opened, the database created `0600` when missing,
     /// and every migration step it has not had applied, before `f` runs. The
     /// write lock is taken when the transaction begins, so `f` never meets a
-    /// busy database.
+    /// busy database, and the schema version is checked again under it, so
+    /// `f` never runs against a schema a newer build migrated.
+    ///
+    /// `f` must not run transaction control (`COMMIT`, `ROLLBACK`, `BEGIN`,
+    /// `SAVEPOINT` release): the transaction is this call's. When `f` returns
+    /// with the transaction ended, the call fails; what `f` committed itself
+    /// stays committed.
     ///
     /// # Errors
     ///
@@ -103,8 +110,14 @@ impl Db {
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| Error::sqlite("begin a write to", &self.path, e))?;
+        // A newer build may have migrated between this connection's
+        // migration and its write lock; under the lock, the version is final.
+        migration::refuse_newer(&tx, &self.path, self.migrations)?;
         // On `Err` the transaction is dropped, which rolls it back.
         let value = f(&tx)?;
+        if tx.is_autocommit() {
+            return Err(Error::sqlite("commit to", &self.path, ended_transaction()).into());
+        }
         tx.commit()
             .map_err(|e| Error::sqlite("commit to", &self.path, e))?;
         Ok(value)

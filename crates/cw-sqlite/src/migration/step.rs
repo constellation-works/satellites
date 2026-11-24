@@ -5,6 +5,12 @@ use std::fmt;
 
 /// One migration step: SQL text, or a function over the open transaction.
 ///
+/// A step must not contain transaction control (`BEGIN`, `COMMIT`,
+/// `ROLLBACK`): its transaction is the migration's, which records the new
+/// version in it. A step that ends it fails, with
+/// [`crate::Error::Migration`], and the version is not advanced; what it
+/// committed before ending it stays.
+///
 /// ```
 /// use cw_sqlite::Step;
 ///

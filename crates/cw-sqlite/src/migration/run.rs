@@ -2,7 +2,7 @@
 
 use super::Step;
 use crate::connection::{get_pragma, set_pragma};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ended_transaction};
 use rusqlite::{Connection, TransactionBehavior};
 use std::path::Path;
 
@@ -81,7 +81,15 @@ fn apply_one(
     }
     let next = expected.saturating_add(1);
     step.apply(&tx)
-        .and_then(|()| set_pragma(&tx, "user_version", next))
+        .and_then(|()| {
+            // A step that ran `COMMIT` or `ROLLBACK` left this connection in
+            // autocommit: what it did is not this step's to record.
+            if tx.is_autocommit() {
+                Err(ended_transaction())
+            } else {
+                set_pragma(&tx, "user_version", next)
+            }
+        })
         .map_err(|e| Error::migration(path, next, e))?;
     tx.commit()
         .map_err(|e| Error::sqlite("commit a migration of", path, e))

@@ -1,6 +1,6 @@
 [package]
 name = "cw-sqlite"
-version = "0.1.0"
+version.workspace = true
 description = "One private SQLite database for a CLI: a writer or a reader per call, fixed pragmas, one write transaction, append-only migrations."
 readme = "README.md"
 keywords = ["sqlite", "migrations", "wal", "cli"]
