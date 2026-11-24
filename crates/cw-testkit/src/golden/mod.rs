@@ -128,18 +128,21 @@ impl Goldens {
     /// hold only normal components. Once a step does not exist, nothing
     /// below it does either, so the rest is joined unchecked.
     fn resolve(&self, name: &Path) -> Result<PathBuf, Error> {
-        let mut path = match lstat(&self.dir)? {
+        // Without trailing separators: `goldens/` names the target of a link
+        // at `goldens`, so its metadata would not show the link.
+        let dir: PathBuf = self.dir.components().collect();
+        let mut path = match lstat(&dir)? {
             Some(meta) if meta.file_type().is_symlink() => {
                 return Err(Error::GoldenSymlink {
                     path: self.dir.clone(),
                 });
             }
-            Some(_) => std::fs::canonicalize(&self.dir).map_err(|source| Error::Io {
+            Some(_) => std::fs::canonicalize(&dir).map_err(|source| Error::Io {
                 action: "resolve the goldens folder",
                 path: self.dir.clone(),
                 source,
             })?,
-            None => return Ok(self.dir.join(name)),
+            None => return Ok(dir.join(name)),
         };
         let mut exists = true;
         for part in name.components() {

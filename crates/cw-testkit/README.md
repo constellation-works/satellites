@@ -11,7 +11,8 @@ machine it runs on. `cw-testkit` is a dev-dependency that gives each test:
 - **`TempRoot::command`** — a `std::process::Command` run in the temp root, whose environment
   is cleared, then given only `HOME`, `PATH` (the temp root's `bin/`, then `/usr/bin:/bin`),
   `<APP>_ROOT` and `GIT_CEILING_DIRECTORIES` (the temp root's parent, so git never discovers a
-  repository above the fixture, even when the system temporary directory is inside one). The
+  repository above the fixture, even when the system temporary directory is inside one, unless
+  that parent's path contains a `:`, which git cannot hold in the variable). The
   test adds whatever else it names; nothing else is inherited, so a developer's exported
   variables, colour settings, real data root or surrounding checkout never reach the program
   under test.

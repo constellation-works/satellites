@@ -152,8 +152,10 @@ impl TempRoot {
     /// temporary directory, which may itself be inside a repository. So
     /// `GIT_CEILING_DIRECTORIES` is set to the temp root's parent, and git
     /// run in the temp root or below never discovers a repository above it.
-    /// A tool that searches upward for its own files by other means is not
-    /// bounded. The environment is cleared, then `HOME` is set to [`home`](Self::home),
+    /// Two limits: a tool that searches upward for its own files by other
+    /// means is not bounded, and on Unix git splits the variable at `:`, so
+    /// if the temp root's parent has a `:` in its path the ceiling is lost
+    /// and git may discover an enclosing repository. The environment is cleared, then `HOME` is set to [`home`](Self::home),
     /// `<APP>_ROOT` to [`app_root`](Self::app_root), and `PATH` to
     /// [`bin`](Self::bin) followed by the system's standard program
     /// directories (`/usr/bin:/bin` on Unix), and `GIT_CEILING_DIRECTORIES`
