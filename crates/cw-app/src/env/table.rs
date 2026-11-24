@@ -9,7 +9,8 @@ use super::var::EnvVar;
 /// The output depends on nothing but its arguments, so a program's golden
 /// test can pin its usage document to it. Columns: the full name, its
 /// meaning, its default and the flag that overrides it; an absent default
-/// or flag is `—`. A `|` in the text is escaped.
+/// or flag is `—`. A `|` in the text is escaped and a line break is
+/// written as `<br>`, so each declaration is one row.
 ///
 /// ```
 /// use cw_app::env::{EnvVar, table};
@@ -35,7 +36,11 @@ pub fn table(app: &str, own: &[EnvVar]) -> String {
     out
 }
 
-/// `text` safe inside a table cell.
+/// `text` safe inside a table cell: a `|` escaped, and every line break
+/// written as `<br>`, so a declaration always stays on one row (a blank
+/// line would end the table).
 fn cell(text: &str) -> String {
     text.replace('|', "\\|")
+        .replace("\r\n", "<br>")
+        .replace(['\n', '\r'], "<br>")
 }

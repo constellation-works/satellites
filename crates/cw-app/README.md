@@ -74,7 +74,8 @@ let usage = cw_app::env::table("tally", &[STEP]); // the kit's rows, then the pr
 ```
 
 `table(app, own)` renders one Markdown table (variable, meaning, default, flag), the kit's
-variables first and then the program's, in the order given. It depends only on its
+variables first and then the program's, in the order given, each on one row (a line break in
+the text is written as `<br>`, a `|` escaped). It depends only on its
 arguments, so a program's golden test pins its usage document to it: generate the section
 from `table`, and a variable added, renamed or reworded without updating the document fails
 the test.
