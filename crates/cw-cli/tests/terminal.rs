@@ -84,4 +84,6 @@ fn the_width_is_known_only_on_a_terminal() {
         decide(&[("COLUMNS", "100")], Probe::piped(), None).width(),
         None
     );
+    // An unusable override falls back to the measured width.
+    assert_eq!(decide(&[("COLUMNS", "0")], TTY, None).width(), Some(80));
 }

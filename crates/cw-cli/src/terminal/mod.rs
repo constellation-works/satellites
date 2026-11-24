@@ -11,8 +11,8 @@
 //!   when `NO_COLOR` is non-empty. A non-empty `CLICOLOR_FORCE` turns it on
 //!   for a terminal, even a dumb one, but never over `NO_COLOR` and never
 //!   for a pipe.
-//! - The width is known only when stdout is a terminal: `COLUMNS`, else the
-//!   terminal's own size. With no width a table is never cut.
+//! - The width is known only when stdout is a terminal: `COLUMNS` when it
+//!   is a positive number, else the terminal's own size. With no width a table is never cut.
 //! - The format comes from the flag, then `<APP>_FORMAT`, then `auto`. An
 //!   unrecognised variable value falls back to `auto` rather than failing.
 
@@ -61,11 +61,14 @@ impl Terminal {
             Format::Auto => Mode::Plain,
         };
         let width = if probe.stdout {
+            // Each is checked before the next is tried, so an unusable
+            // `COLUMNS` (`0`, `wide`) falls back to the measured width.
+            let usable = |columns: &usize| *columns > 0;
             env.var("COLUMNS")
                 .and_then(|value| value.to_str())
                 .and_then(|value| value.trim().parse::<usize>().ok())
-                .or(probe.columns)
-                .filter(|&columns| columns > 0)
+                .filter(usable)
+                .or(probe.columns.filter(usable))
         } else {
             None
         };
