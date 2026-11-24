@@ -48,6 +48,10 @@ pub fn exec<A: App>(
         None => Pending::none(),
     };
     let result = A::run(&ctx, command).map_err(Into::into);
-    audit.mark(result.as_ref().map(A::target).map_err(cw_base::Error::code));
+    // The target exists for the audit line alone: a read-only command's
+    // outcome is never handed to `A::target`.
+    if audit.is_audited() {
+        audit.mark(result.as_ref().map(A::target).map_err(cw_base::Error::code));
+    }
     Finished::new(result, audit)
 }
