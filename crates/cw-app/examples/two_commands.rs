@@ -4,11 +4,17 @@
 //! Run with `cargo run -p cw-app --example two_commands`. It works in a
 //! temporary directory and removes it on exit.
 
+use cw_app::env::{EnvVar, table};
 use cw_app::{App, AuditMeta, Ctx, Env, Origin, Runtime, Surface, exec};
 use cw_base::{Error, Kind};
 use cw_fs::Cap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+
+/// The one variable this program reads beyond the kit's: declared once,
+/// read through the declaration, and listed in the usage table.
+const START: EnvVar =
+    EnvVar::app("START", "The tally a fresh data directory starts from.").with_default("`0`");
 
 /// What the program built at start: where its tally lives.
 struct State {
@@ -99,6 +105,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let origin = Origin::new(Surface::CLI, env.user().map(str::to_owned));
 
     let mut out = std::io::stdout().lock();
+    writeln!(out, "{}", table("tally", &[START]))?;
+
+    // A fresh data directory starts from TALLY_START when it is set.
+    let start = env
+        .app("tally")
+        .get(&START)
+        .and_then(|value| value.to_str()?.parse::<u64>().ok());
+    if let Some(start) = start {
+        cw_fs::write_atomic(&runtime.state().tally, start.to_string().as_bytes())?;
+    }
+
     for command in [
         Command::Add(2),
         Command::Add(0),

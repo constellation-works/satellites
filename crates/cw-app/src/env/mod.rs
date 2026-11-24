@@ -11,8 +11,14 @@
 //! asks and as a shell's `VAR= cmd` intends.
 
 mod app;
+mod kit;
+mod table;
+mod var;
 
 pub use app::AppEnv;
+pub use kit::{FORMAT, HOME, KIT_VARS, LOG, NO_COLOR, ROOT, TERM, USER, USERNAME};
+pub use table::table;
+pub use var::{EnvVar, VarName};
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -64,28 +70,36 @@ impl Env {
     /// `HOME`.
     #[must_use]
     pub fn home(&self) -> Option<&Path> {
-        self.var("HOME").map(Path::new)
+        self.global(&HOME).map(Path::new)
     }
 
     /// The operating-system user: `USER`, else `USERNAME` (Windows), when
     /// it is valid UTF-8.
     #[must_use]
     pub fn user(&self) -> Option<&str> {
-        self.var("USER")
+        self.global(&USER)
             .and_then(OsStr::to_str)
-            .or_else(|| self.var("USERNAME").and_then(OsStr::to_str))
+            .or_else(|| self.global(&USERNAME).and_then(OsStr::to_str))
     }
 
     /// Whether `NO_COLOR` asks for output without color.
     #[must_use]
     pub fn no_color(&self) -> bool {
-        self.var("NO_COLOR").is_some()
+        self.global(&NO_COLOR).is_some()
     }
 
     /// `TERM`, the terminal type, such as `dumb`.
     #[must_use]
     pub fn term(&self) -> Option<&OsStr> {
-        self.var("TERM")
+        self.global(&TERM)
+    }
+
+    /// The value of the declared global variable `var`.
+    fn global(&self, var: &EnvVar) -> Option<&OsStr> {
+        match var.name() {
+            VarName::Global(name) => self.var(name),
+            VarName::App(_) => None,
+        }
     }
 
     /// The variables of the program named `name`: its root, format and log

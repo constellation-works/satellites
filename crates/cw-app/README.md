@@ -13,6 +13,7 @@ record, command or error code.
 | `Runtime<S>` / `Ctx<'_, S>` | What the program built at start, and the borrowed view a command runs against: state, clock, origin |
 | `Origin`, `Surface` | The surface (`cli`, `mcp`) and what the client said about itself, recorded as the actor |
 | `Env::capture()` | The only read of the process environment; `Env::from_vars` for tests |
+| `EnvVar`, `KIT_VARS`, `env::table(app, own)` | One declaration per variable read; the kit's own list; the Markdown usage table of both |
 | `env.app(name).data_dir(explicit)` | Explicit root, else `<APP>_ROOT`, else `$HOME/.<app>`; a pure function of the captured value |
 | `AuditLog` | `<root>/audit.jsonl`: append under its own lock, read within a cap |
 
@@ -57,6 +58,26 @@ snapshot: `NO_COLOR`, `TERM`, `<APP>_FORMAT`, `<APP>_LOG`. An empty value reads 
 `Debug` shows variable names only, never values. `scripts/check-dependency-direction.sh`
 fails when a file under `src/` outside `src/env/` names `std::env`; it scans `src/` only, so
 tests and examples may read the environment.
+
+## Declaring variables
+
+Every variable a program reads is declared once, as a `const` `EnvVar`: its name (global, or
+a suffix under the program's prefix), what it means, its default and the flag it stands in
+for. The kit declares its own (`KIT_VARS`: the root, format and log variables, `NO_COLOR`,
+`TERM`, `HOME`, `USER`, `USERNAME`) and reads them only through those declarations; a
+program declares its own the same way and reads one with `env.app(name).get(&VAR)`.
+
+```rust,ignore
+const STEP: EnvVar = EnvVar::app("STEP", "How much `add` adds.").with_default("`1`").with_flag("--step");
+let step = env.app("tally").get(&STEP);           // TALLY_STEP
+let usage = cw_app::env::table("tally", &[STEP]); // the kit's rows, then the program's
+```
+
+`table(app, own)` renders one Markdown table (variable, meaning, default, flag), the kit's
+variables first and then the program's, in the order given. It depends only on its
+arguments, so a program's golden test pins its usage document to it: generate the section
+from `table`, and a variable added, renamed or reworded without updating the document fails
+the test.
 
 ## Errors
 
