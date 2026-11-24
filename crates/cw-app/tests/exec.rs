@@ -248,3 +248,34 @@ fn the_clock_and_actor_come_from_the_context() -> TestResult {
     assert_eq!(record.at, "2026-11-24T09:30:00Z");
     Ok(())
 }
+
+#[test]
+fn an_actor_that_is_not_an_identifier_is_never_written_verbatim() -> TestResult {
+    let (_scratch, root) = data_dir()?;
+    let runtime = Runtime::new(&root, ());
+    let claim = format!("client v1 token={SECRET_ARG}");
+    let origin = Origin::new(Surface::MCP, Some(claim.clone()));
+
+    let (result, warning) = exec::<Notes>(
+        &runtime,
+        &origin,
+        Command::Add {
+            body: "x".to_owned(),
+        },
+    )
+    .settle();
+    assert!(result.is_ok());
+    assert!(warning.is_none());
+
+    let text = std::fs::read_to_string(runtime.audit_log().path())?;
+    assert!(!text.contains(SECRET_ARG));
+    let lines = runtime.audit_log().read(Cap::bytes(1 << 16))?;
+    let [Ok(record)] = lines.as_slice() else {
+        panic!("one readable line expected, got {lines:?}");
+    };
+    assert_eq!(
+        record.actor.as_deref(),
+        Some(cw_app::audit::ACTOR_PLACEHOLDER)
+    );
+    Ok(())
+}

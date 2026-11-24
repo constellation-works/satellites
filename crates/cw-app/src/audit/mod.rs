@@ -8,7 +8,9 @@
 //! - **Identifiers only.** A line carries the command name, the record it
 //!   acted on, the outcome, the stable error code, the surface and the
 //!   actor: never an argument value or an error message, which can hold the
-//!   data itself or a path.
+//!   data itself or a path. The actor is what the client claimed, so it is
+//!   written only when it reads as an identifier ([`ACTOR_PLACEHOLDER`]
+//!   otherwise).
 //! - **A failure until told otherwise.** A record starts as a failure, so a
 //!   command that panics is logged as one; an outcome is never assumed.
 //! - **Its own lock.** Lines are appended through [`cw_fs::append`] under
@@ -20,11 +22,13 @@
 //! - **Versioned.** Each line carries its `format`; the reader upgrades an
 //!   older line through declared steps and refuses a newer one.
 
+mod actor;
 mod line;
 mod log;
 mod meta;
 mod pending;
 
+pub use actor::{ACTOR_MAX_LEN, ACTOR_PLACEHOLDER};
 pub use line::{FORMAT, Record, Status};
 pub use log::{AuditLog, FILE, LOCK_FILE};
 pub use meta::AuditMeta;

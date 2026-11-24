@@ -28,7 +28,9 @@ impl Surface {
 /// actor.
 ///
 /// A command line names the operating-system user ([`crate::Env::user`]);
-/// an MCP server names the client from its handshake.
+/// an MCP server names the client from its handshake. The actor is a claim,
+/// handed to the command as given; the audit line records it only when it
+/// reads as an identifier ([`crate::audit::ACTOR_PLACEHOLDER`] otherwise).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Origin {
     surface: Surface,

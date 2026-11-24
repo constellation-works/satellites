@@ -1,5 +1,6 @@
 //! The record of one command between its start and its line.
 
+use super::actor::recorded;
 use super::line::{Record, Status};
 use super::log::AuditLog;
 use super::meta::AuditMeta;
@@ -128,7 +129,10 @@ impl Entry {
         let record = Record {
             at: cw_base::time::format_rfc3339(self.at)?,
             surface: Some(self.surface.to_owned()),
-            actor: self.actor.clone(),
+            actor: self
+                .actor
+                .as_deref()
+                .map(|actor| recorded(actor).to_owned()),
             command: self.command.to_owned(),
             status: self.status,
             target: self.target.clone(),

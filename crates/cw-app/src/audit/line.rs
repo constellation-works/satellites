@@ -54,7 +54,8 @@ pub struct Record {
     /// The surface it came through, such as `cli` or `mcp`; `None` on a line
     /// written before the surface was recorded.
     pub surface: Option<String>,
-    /// Who the client said it was, when it said.
+    /// Who the client said it was, when it said; [`super::ACTOR_PLACEHOLDER`]
+    /// when that was not an identifier.
     pub actor: Option<String>,
     /// The command's name, such as `note add`.
     pub command: String,
