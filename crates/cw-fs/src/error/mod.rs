@@ -140,13 +140,15 @@ impl Error {
 }
 
 /// The `chmod` that makes `path` owner-only, safe to paste into a shell:
-/// `--` ends the options, so a name starting with `-` is not read as one,
+/// `--` comes first and ends the options, so a name starting with `-` is
+/// not read as one by GNU or BSD `chmod` (BSD stops at the first operand,
+/// so a `--` after the mode would itself be taken as a file name),
 /// and the path is one single-quoted word, each `'` written as `'\''`. A
 /// path that is not valid UTF-8 cannot be printed exactly, so the remedy
 /// says so instead of printing a command that would name another file.
 fn chmod_remedy(fix: &str, path: &Path) -> String {
     match path.to_str() {
-        Some(text) => format!("fix with: chmod {fix} -- '{}'", text.replace('\'', r"'\''")),
+        Some(text) => format!("fix with: chmod -- {fix} '{}'", text.replace('\'', r"'\''")),
         None => format!(
             "set its mode to {fix}; its name is not valid UTF-8, so no command can be printed for it"
         ),

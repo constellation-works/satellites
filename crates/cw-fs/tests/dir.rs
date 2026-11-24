@@ -64,9 +64,12 @@ mod unix {
             matches!(err, Error::Permissions { mode, .. } if mode == want_mode),
             "got {err:?}"
         );
-        // Options end before the path, and the path is one shell word.
-        let chmod = format!("chmod {fix} -- '{}'", path.display());
-        assert!(message.contains(&chmod), "{message:?} lacks {chmod:?}");
+        // `--` ends the options before the mode; the path is one shell word.
+        let chmod = format!("fix with: chmod -- {fix} '{}'", path.display());
+        assert!(
+            message.ends_with(&chmod),
+            "{message:?} does not end with {chmod:?}"
+        );
         Ok(())
     }
 

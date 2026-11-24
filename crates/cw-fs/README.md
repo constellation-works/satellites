@@ -18,11 +18,12 @@ no record and no file name.
 
 ## Guarantees
 
-- **Durable.** A crash leaves the old file or the new one, never a torn one. On Linux and
-  macOS the directory is synced too, so once a write returns a crash cannot bring the old
-  file back; a filesystem that cannot sync a directory (`EINVAL`, `ENOTSUP`) is tolerated,
-  and any other failure is an error. On native Windows the directory sync is a no-op, so
-  that last guarantee is the volume's.
+- **Durable.** A crash leaves the old file or the new one, never a torn one. Once a write
+  returns, a crash cannot bring the old file back only when the directory sync succeeded.
+  On Linux and macOS it runs, and any failure is an error, except that a filesystem that
+  cannot sync a directory (`EINVAL`, `ENOTSUP`) is tolerated and the sync is skipped. On
+  native Windows the directory sync is a no-op. In both of those cases the guarantee is the
+  filesystem's own.
 - **Owner-only.** Everything is created `0700` or `0600`. `inspect_file`, `inspect_dir`,
   `read`, `append` and `Lock::acquire` refuse state owned by another user, or with any group
   or other permission bit, and the error names the `chmod` that fixes it, with the path
