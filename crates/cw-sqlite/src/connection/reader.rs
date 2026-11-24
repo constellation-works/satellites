@@ -1,6 +1,6 @@
 //! Opening a read-only connection.
 
-use super::files::{header, sidecars};
+use super::files::{directory_writable, wal_has_content};
 use super::{get_pragma, inspect, resolve, set_pragma};
 use crate::error::{Error, Result, is_wal_unreadable};
 use crate::migration;
@@ -20,6 +20,12 @@ use std::time::Duration;
 /// for one command's reads: while it lives, a checkpoint cannot pass its
 /// snapshot. A statement that would write through it fails, and so does
 /// `BEGIN`, since its transaction is already open.
+///
+/// The version check holds until that transaction ends. A caller that runs
+/// `COMMIT` or `ROLLBACK` through it ends the snapshot: later statements
+/// read whatever is committed then, perhaps a newer build's schema, while
+/// [`Reader::version`] still reports the old version. Don't; open another
+/// reader instead.
 #[derive(Debug)]
 pub struct Reader {
     conn: Connection,
@@ -37,8 +43,9 @@ impl Reader {
     }
 
     /// Whether the WAL could not be read and the database was opened with
-    /// `immutable=1`: a copy, or a database on a read-only mount, with no
-    /// readable `-wal` or `-shm`. What it reads is the main file alone, so a
+    /// `immutable=1`: a copy, or a database on a read-only mount, in a
+    /// directory this process cannot write, with no readable index and
+    /// nothing in its `-wal`. What it reads is the main file alone, so a
     /// caller may say that the view is a copy's.
     #[must_use]
     pub fn immutable(&self) -> bool {
@@ -62,37 +69,58 @@ impl Deref for Reader {
 
 /// A [`Reader`] on the database at `path`, refused when it is missing or a
 /// newer build migrated it.
-///
-/// It creates and changes no file, with one exception SQLite does not let it
-/// avoid: a WAL-mode database with a `-shm` index and no `-wal` gets an
-/// empty `-wal`, owner-only like the database.
 pub(crate) fn open(path: &Path, migrations: &[Step], wait: Duration) -> Result<Reader> {
-    let real = resolve(path)?;
-    if !inspect(&real)? {
+    open_resolved(path, &resolve(path)?, migrations, wait)
+}
+
+/// [`open`] on `real`, the already resolved `path`.
+///
+/// It writes nothing of its own: the `-shm` index is opened read-only. When
+/// SQLite cannot read the WAL that way (the `-shm` or the `-wal` is
+/// missing), what follows depends on the directory:
+///
+/// - **Not writable:** no writer can exist there, so the main file is a
+///   static copy. With nothing in the `-wal`, it is the whole database and
+///   is opened `immutable=1`, and the reader says so; with WAL content the
+///   main file may lack committed pages, and the read is refused.
+/// - **Writable:** a writer may exist, so the main file is never trusted
+///   alone. The reader opens again with a shared `-shm`, and SQLite creates
+///   the missing `-wal` (empty) and `-shm`, owner-only like the database.
+pub(crate) fn open_resolved(
+    path: &Path,
+    real: &Path,
+    migrations: &[Step],
+    wait: Duration,
+) -> Result<Reader> {
+    if !inspect(real)? {
         return Err(Error::Missing {
             path: path.to_path_buf(),
         });
     }
-    let sidecars = sidecars(&real)?;
-    // With no index and nothing in the WAL, the main file is the whole
-    // database. SQLite's read-only open would create an empty `-wal` and then
-    // fail on the missing index, so open it immutable at once.
-    if !sidecars.shm && !sidecars.wal_has_content && header(&real)?.is_some_and(|header| header.wal)
-    {
-        return open_as(path, &real, migrations, wait, true)
-            .map_err(|attempt| attempt.into_error(path));
-    }
-    match open_as(path, &real, migrations, wait, false) {
-        // The fallback reads the main file alone, so it is refused when the
-        // WAL may hold committed pages the main file lacks.
-        Err(Attempt::WalUnreadable(e)) if sidecars.wal_has_content => {
-            Err(Error::sqlite("read the write-ahead log of", path, e))
-        }
-        Err(Attempt::WalUnreadable(_)) => {
-            open_as(path, &real, migrations, wait, true).map_err(|attempt| attempt.into_error(path))
+    match open_as(path, real, migrations, wait, Open::ReadOnlyIndex) {
+        Err(Attempt::WalUnreadable(e)) => {
+            let next = if directory_writable(real)? {
+                Open::SharedIndex
+            } else if wal_has_content(real)? {
+                return Err(Error::sqlite("read the write-ahead log of", path, e));
+            } else {
+                Open::Immutable
+            };
+            open_as(path, real, migrations, wait, next).map_err(|attempt| attempt.into_error(path))
         }
         result => result.map_err(|attempt| attempt.into_error(path)),
     }
+}
+
+/// How a reader opens the database.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Open {
+    /// Read-only, with the `-shm` index opened read-only too.
+    ReadOnlyIndex,
+    /// Read-only, with the `-shm` index shared, so SQLite may create it.
+    SharedIndex,
+    /// The main file alone, `immutable=1`.
+    Immutable,
 }
 
 /// Why one attempt to open a reader failed.
@@ -118,22 +146,25 @@ fn open_as(
     real: &Path,
     migrations: &[Step],
     wait: Duration,
-    immutable: bool,
+    how: Open,
 ) -> Result<Reader, Attempt> {
+    let immutable = how == Open::Immutable;
+    let first = how == Open::ReadOnlyIndex;
     let sqlite = |action| {
         move |e: rusqlite::Error| {
-            if !immutable && is_wal_unreadable(&e) {
+            if first && is_wal_unreadable(&e) {
                 Attempt::WalUnreadable(e)
             } else {
                 Attempt::Failed(Error::sqlite(action, path, e))
             }
         }
     };
-    let uri = if immutable {
-        format!("file:{}?immutable=1", uri_path(real))
-    } else {
-        format!("file:{}?readonly_shm=1", uri_path(real))
+    let query = match how {
+        Open::ReadOnlyIndex => "?readonly_shm=1",
+        Open::SharedIndex => "",
+        Open::Immutable => "?immutable=1",
     };
+    let uri = format!("file:{}{query}", uri_path(real));
     let conn = Connection::open_with_flags(
         uri,
         OpenFlags::SQLITE_OPEN_READ_ONLY
@@ -162,7 +193,8 @@ fn open_as(
 /// `path` for a `file:` URI: `%`, `?` and `#` escaped, as SQLite requires.
 fn uri_path(path: &Path) -> String {
     let mut out = String::new();
-    // `resolve` refused a path that is not UTF-8, so nothing is lost here.
+    // `resolve` refused a path that is not UTF-8, as given or resolved, so
+    // nothing is lost here.
     for c in path.to_string_lossy().chars() {
         match c {
             '%' => out.push_str("%25"),

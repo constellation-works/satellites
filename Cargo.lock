@@ -49,6 +49,7 @@ dependencies = [
  "cw-base",
  "cw-fs",
  "rusqlite",
+ "rustix",
  "tempfile",
  "thiserror",
 ]

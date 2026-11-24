@@ -1,7 +1,7 @@
 //! The database file and its WAL-mode companions.
 
 use crate::error::{Error, Result};
-use std::io::{self, Read as _};
+use std::io;
 use std::path::{Path, PathBuf};
 
 /// The `suffix` file (`-wal`, `-shm`) beside the database at `path`.
@@ -21,18 +21,11 @@ pub(crate) fn sidecar(path: &Path, suffix: &str) -> PathBuf {
 /// `cw-fs` uses it. The parent directory is trusted: a process that can
 /// swap it can swap the database too.
 ///
-/// A path that is not valid UTF-8 is refused, because a reader hands SQLite
-/// a `file:` URI, which is text.
+/// A path that is not valid UTF-8, as given or once resolved, is refused,
+/// because a reader hands SQLite a `file:` URI, which is text.
 pub(crate) fn resolve(path: &Path) -> Result<PathBuf> {
     if path.to_str().is_none() {
-        return Err(Error::File(cw_fs::Error::Io {
-            action: "open",
-            path: path.to_path_buf(),
-            source: io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "the path is not valid UTF-8, which a SQLite URI requires",
-            ),
-        }));
+        return Err(not_utf8(path));
     }
     let (Some(name), Some(parent)) = (path.file_name(), path.parent()) else {
         return Ok(path.to_path_buf());
@@ -43,6 +36,8 @@ pub(crate) fn resolve(path: &Path) -> Result<PathBuf> {
         parent
     };
     match std::fs::canonicalize(parent) {
+        // The resolved directory can differ from the spelling checked above.
+        Ok(real) if real.to_str().is_none() => Err(not_utf8(path)),
         Ok(real) => Ok(real.join(name)),
         // No directory, so no database: the caller's inspect says so.
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(path.to_path_buf()),
@@ -52,6 +47,18 @@ pub(crate) fn resolve(path: &Path) -> Result<PathBuf> {
             source,
         })),
     }
+}
+
+/// The refusal of a path that is not valid UTF-8.
+fn not_utf8(path: &Path) -> Error {
+    Error::File(cw_fs::Error::Io {
+        action: "open",
+        path: path.to_path_buf(),
+        source: io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the path is not valid UTF-8, which a SQLite URI requires",
+        ),
+    })
 }
 
 /// Refuse the database or a companion that is a link, another user's, or
@@ -80,71 +87,50 @@ pub(crate) fn create_if_missing(path: &Path) -> Result<()> {
     }
 }
 
-/// What the files beside an existing database say, looked at without SQLite.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Sidecars {
-    /// The `-wal` file exists and is not empty: it may hold committed pages
-    /// the main file does not.
-    pub(crate) wal_has_content: bool,
-    /// The `-shm` index exists.
-    pub(crate) shm: bool,
+/// Whether the `-wal` beside the database at `path` exists and is not
+/// empty, so it may hold committed pages the main file does not. Looked at
+/// by name, without opening it.
+pub(crate) fn wal_has_content(path: &Path) -> Result<bool> {
+    let wal = sidecar(path, "-wal");
+    match std::fs::symlink_metadata(&wal) {
+        Ok(meta) => Ok(meta.len() > 0),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(Error::File(cw_fs::Error::Io {
+            action: "inspect",
+            path: wal,
+            source,
+        })),
+    }
 }
 
-/// Look at the `-wal` and `-shm` beside the database at `path`.
-pub(crate) fn sidecars(path: &Path) -> Result<Sidecars> {
-    let len = |suffix: &str| {
-        let file = sidecar(path, suffix);
-        match std::fs::symlink_metadata(&file) {
-            Ok(meta) => Ok(Some(meta.len())),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(source) => Err(Error::File(cw_fs::Error::Io {
-                action: "inspect",
-                path: file,
-                source,
-            })),
-        }
+/// Whether this process may create files in the database's directory. When
+/// it may not, no writer can exist there either (it would need to create
+/// the `-wal` and `-shm`), so the main file is static: a copy, or a
+/// database on a read-only mount.
+pub(crate) fn directory_writable(path: &Path) -> Result<bool> {
+    let dir = match path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        Some(_) | None => Path::new("."),
     };
-    Ok(Sidecars {
-        wal_has_content: len("-wal")?.is_some_and(|len| len > 0),
-        shm: len("-shm")?.is_some(),
-    })
-}
-
-/// What the main file's 100-byte header says.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Header {
-    /// The database is in WAL mode (read and write format versions both 2).
-    pub(crate) wal: bool,
-    /// `PRAGMA user_version`, as the main file holds it.
-    pub(crate) user_version: u32,
-}
-
-/// The main file's header, read without SQLite; `None` while the file is
-/// shorter than a header (a database created and not yet written) or does
-/// not start like a SQLite database. Only authoritative when the `-wal` has
-/// no content.
-pub(crate) fn header(path: &Path) -> Result<Option<Header>> {
-    let io_error = |source| {
+    writable(dir).map_err(|source| {
         Error::File(cw_fs::Error::Io {
-            action: "read the header of",
+            action: "check whether it can write beside",
             path: path.to_path_buf(),
             source,
         })
-    };
-    let mut bytes = [0_u8; 100];
-    let mut file = std::fs::File::open(path).map_err(io_error)?;
-    match file.read_exact(&mut bytes) {
-        Ok(()) => {}
-        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(e) => return Err(io_error(e)),
+    })
+}
+
+#[cfg(unix)]
+fn writable(dir: &Path) -> io::Result<bool> {
+    match rustix::fs::access(dir, rustix::fs::Access::WRITE_OK) {
+        Ok(()) => Ok(true),
+        Err(e) if e == rustix::io::Errno::ACCESS || e == rustix::io::Errno::ROFS => Ok(false),
+        Err(e) => Err(e.into()),
     }
-    if !bytes.starts_with(b"SQLite format 3\0") {
-        // Not a database: SQLite's own open says so, as `Corrupt`.
-        return Ok(None);
-    }
-    let [a, b, c, d] = [bytes[60], bytes[61], bytes[62], bytes[63]];
-    Ok(Some(Header {
-        wal: bytes[18] == 2 && bytes[19] == 2,
-        user_version: u32::from_be_bytes([a, b, c, d]),
-    }))
+}
+
+#[cfg(not(unix))]
+fn writable(dir: &Path) -> io::Result<bool> {
+    Ok(!std::fs::metadata(dir)?.permissions().readonly())
 }

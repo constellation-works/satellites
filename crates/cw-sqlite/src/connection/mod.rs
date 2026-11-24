@@ -10,7 +10,7 @@
 //! - **Paths.** The directory is resolved first, and the resolved path is
 //!   what is inspected, created and opened. The directory is trusted, as in
 //!   `cw-fs`; only the file and its companions are held to the checks. A
-//!   path that is not valid UTF-8 is refused.
+//!   path that is not valid UTF-8, as given or once resolved, is refused.
 //! - **Writers** open read-write, with no create, no mutex and no following
 //!   of a link. `busy_timeout` is the lock wait; the journal mode is WAL,
 //!   and the switch is retried until the wait runs out, because SQLite does
@@ -18,20 +18,24 @@
 //!   committed transaction survives power loss; `foreign_keys` is on; the
 //!   `-wal` and `-shm` files are kept after the last connection closes
 //!   (`SQLITE_FCNTL_PERSIST_WAL`), so a read-only reader finds them. A
-//!   database a newer build migrated is refused before it is opened for
-//!   writing, so the refusal creates and changes no file, except where the
-//!   `-wal` holds pages and the `-shm` is gone: there only a read-write open
-//!   can read the version, and it recreates the `-shm`.
+//!   database a newer build migrated is refused, by a reader before the
+//!   read-write open and again under the write lock; the refusal writes
+//!   nothing of its own. (A refused connection that closes last may still
+//!   checkpoint committed WAL pages into the main file, which changes
+//!   neither its content nor its version.) The database file is never
+//!   opened outside SQLite: closing such a descriptor would drop the POSIX
+//!   locks of every SQLite connection to it in this process.
 //! - **Readers** open read-only and `query_only`, take no lock and write
-//!   nothing: even the `-shm` index is opened read-only (`readonly_shm=1`).
-//!   A reader holds one read transaction, opened by its version check, so
-//!   all it reads is from the version it checked. When the WAL cannot be
-//!   read and holds nothing (a copy, or a database whose writers never left
-//!   an index), the reader opens the main file with `immutable=1` and says
-//!   so; when the WAL holds pages the main file may lack, it is refused. The
-//!   one file a reader can create is an empty `-wal`, owner-only, for a
-//!   WAL-mode database with a `-shm` and no `-wal`: SQLite gives it no way
-//!   to avoid that.
+//!   nothing of their own: the `-shm` index is opened read-only
+//!   (`readonly_shm=1`). A reader holds one read transaction, opened by its
+//!   version check, so all it reads is from the version it checked, until
+//!   the caller ends that transaction. When SQLite cannot read the WAL that
+//!   way, a reader in a directory this process cannot write (a copy, a
+//!   read-only mount, where no writer can exist) opens the main file with
+//!   `immutable=1` and says so, or is refused when the `-wal` has content;
+//!   a reader in a writable directory opens again with a shared index, and
+//!   SQLite creates a missing `-wal` (empty) and `-shm`, owner-only like the
+//!   database.
 //! - **Pragmas** are set with plain SQL, not `rusqlite`'s helper, which reads
 //!   the schema first and so fails on a read-only directory.
 

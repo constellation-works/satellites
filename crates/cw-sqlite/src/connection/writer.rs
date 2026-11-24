@@ -1,7 +1,7 @@
 //! Opening a read-write connection.
 
-use super::files::{header, sidecars};
-use super::{create_if_missing, get_pragma, inspect, open_reader, resolve, set_pragma};
+use super::reader::open_resolved;
+use super::{create_if_missing, get_pragma, inspect, resolve, set_pragma};
 use crate::error::{Error, Result, is_busy};
 use crate::migration;
 use crate::migration::Step;
@@ -24,7 +24,7 @@ pub(crate) fn open(
 ) -> Result<Connection> {
     let real = resolve(path)?;
     if inspect(&real)? {
-        refuse_newer_without_writing(path, &real, migrations, wait)?;
+        refuse_newer_before_writing(path, &real, migrations, wait)?;
     } else {
         create_if_missing(&real)?;
     }
@@ -63,27 +63,18 @@ pub(crate) fn open(
     Ok(conn)
 }
 
-/// Refuse a database a newer build migrated without opening it for writing,
-/// which would create or rebuild its `-wal` and `-shm`. With nothing in the
-/// WAL the main file's header holds the version; with WAL content and an
-/// index, a [`super::Reader`] reads it and changes nothing. With WAL content
-/// and no index there is no way to read it that writes nothing, so the check
-/// is left to the read-write connection, which recreates the `-shm`.
-fn refuse_newer_without_writing(
+/// Refuse a database a newer build migrated before opening it for writing:
+/// a reader reads the version through SQLite, writing nothing of its own,
+/// where a read-write open would run WAL recovery. The database file is
+/// never opened outside SQLite: closing such a descriptor would drop the
+/// POSIX locks of every SQLite connection to it in this process.
+fn refuse_newer_before_writing(
     path: &Path,
     real: &Path,
     migrations: &[Step],
     wait: Duration,
 ) -> Result<()> {
-    let sidecars = sidecars(real)?;
-    if !sidecars.wal_has_content {
-        let found = header(real)?.map_or(0, |header| header.user_version);
-        return migration::refuse_past(path, found, migrations).map(|_| ());
-    }
-    if sidecars.shm {
-        return open_reader(path, migrations, wait).map(drop);
-    }
-    Ok(())
+    open_resolved(path, real, migrations, wait).map(drop)
 }
 
 /// Put the database in WAL mode, which stays set in the file. SQLite does
