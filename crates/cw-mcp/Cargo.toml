@@ -1,0 +1,35 @@
+[package]
+name = "cw-mcp"
+version.workspace = true
+description = "A stdio Model Context Protocol server over a list of typed, synchronous tools, each running through the same entry point as a program's command line."
+readme = "README.md"
+keywords = ["mcp", "model-context-protocol", "stdio", "tools", "json-rpc"]
+categories = ["command-line-interface"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# cw-mcp depends on cw-base and cw-app only (scripts/check-dependency-direction.sh).
+# rmcp and tokio stay private: no public signature names them
+# (scripts/check-mcp-private-runtime.sh).
+[dependencies]
+cw-app.workspace = true
+cw-base.workspace = true
+rmcp.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "io-std", "io-util", "time"] }
+
+[features]
+# The in-process duplex harness, for a project's own wire tests.
+test-support = []
+
+[dev-dependencies]
+cw-mcp = { path = ".", features = ["test-support"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,4 +1,4 @@
-.PHONY: help build test hostile-env-test fmt fmt-check clippy doc deny standards-check dependency-direction ci-fast ci-lint ci clean
+.PHONY: help build test hostile-env-test fmt fmt-check clippy doc deny standards-check dependency-direction mcp-private-runtime ci-fast ci-lint ci clean
 
 CARGO ?= cargo
 # Every build uses the committed Cargo.lock as is; a stale lock fails instead
@@ -29,12 +29,13 @@ endef
 help:
 	@echo "satellites make targets"
 	@echo ""
-	@echo "  make ci-fast          Pre-handoff gate, no compile: fmt, standards-check, dependency-direction"
+	@echo "  make ci-fast          Pre-handoff gate, no compile: fmt, standards-check, dependency-direction, mcp-private-runtime"
 	@echo "  make ci-lint          clippy -D warnings, rustdoc -D warnings, cargo-deny (skipped locally if not installed)"
 	@echo "  make test             All tests (nextest when installed, else cargo test) + doctests"
 	@echo "  make hostile-env-test The tests under a hostile HOME, TMPDIR and XDG_*"
 	@echo "  make standards-check  Run the vendored standards check (docs/standards/check.sh)"
 	@echo "  make dependency-direction  Check which kit crates each crate may depend on"
+	@echo "  make mcp-private-runtime   Check that cw-mcp's public API names no rmcp or tokio type"
 	@echo "  make ci               Everything above; what CI runs"
 	@echo "  make build | fmt | clean"
 
@@ -100,8 +101,13 @@ standards-check:
 dependency-direction:
 	sh scripts/check-dependency-direction.sh
 
+# cw-mcp keeps its MCP SDK and its runtime out of every public signature.
+# No compile.
+mcp-private-runtime:
+	sh scripts/check-mcp-private-runtime.sh
+
 # Pre-handoff gate for agents: no compile (STD-04 R12).
-ci-fast: fmt-check standards-check dependency-direction
+ci-fast: fmt-check standards-check dependency-direction mcp-private-runtime
 
 ci-lint: clippy doc deny
 

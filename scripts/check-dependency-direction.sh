@@ -11,8 +11,9 @@
 # `cargo metadata --no-deps`, which names each dependency by its package, so
 # a renamed dependency (`files = { package = "cw-fs" }`) or a quoted key is
 # seen for what it is. Every kind counts (normal, dev, build, any target), so
-# no edge hides in a test or a platform. No compile. Needs cargo, jq, awk,
-# sed and grep.
+# no edge hides in a test or a platform. A crate naming itself (a
+# dev-dependency that turns on its own test-support feature) is not an edge.
+# No compile. Needs cargo, jq, awk, sed and grep.
 
 set -u
 
@@ -25,6 +26,7 @@ cw-supervise:
 cw-sqlite: cw-base cw-fs
 cw-app: cw-base cw-fs
 cw-cli: cw-base cw-app
+cw-mcp: cw-base cw-app
 '
 
 # crate: the modules its sources must not name (space-separated). Found in a
@@ -91,9 +93,9 @@ metadata=$(cargo metadata --format-version 1 --no-deps --manifest-path "$root/Ca
 # "<name>\t<manifest dir>\t<kit dependencies, space-separated>".
 tab=$(printf '\t')
 graph=$(printf '%s\n' "$metadata" |
-  jq -er '[.packages[] | select(.name | startswith("cw-"))
+  jq -er '[.packages[] | select(.name | startswith("cw-")) | .name as $self
     | [.name, (.manifest_path | sub("/Cargo.toml$"; "")),
-       ([.dependencies[].name | select(startswith("cw-"))] | unique | join(" "))]
+       ([.dependencies[].name | select(startswith("cw-") and . != $self)] | unique | join(" "))]
     | join("\t")] | join("\n")') ||
   { printf 'dependency direction: cannot run: cargo metadata gave no package list\n' >&2; exit 2; }
 
