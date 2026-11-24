@@ -333,6 +333,69 @@ fn a_record_without_a_start_time_is_not_named_on_linux() -> TestResult {
     Ok(())
 }
 
+/// Set on the child [`a_lock_whose_holder_record_cannot_be_written_is_still_acquired`]
+/// starts, which runs with no room to write any file.
+#[cfg(unix)]
+const NO_ROOM_ENV: &str = "CW_FS_TEST_NO_ROOM_FOR_THE_RECORD";
+
+/// Not a test: the body of that child. Every file write fails there (the
+/// file-size limit is 0 and `SIGXFSZ` is ignored), so the lock is taken but
+/// its holder record cannot be written.
+#[cfg(unix)]
+#[test]
+#[ignore = "run only as the child of a_lock_whose_holder_record_cannot_be_written_is_still_acquired"]
+fn child_acquires_with_no_room_for_the_record() -> TestResult {
+    if std::env::var_os(NO_ROOM_ENV).is_none() {
+        return Ok(());
+    }
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join(".lock");
+    let lock = Lock::acquire(&path, "no room", Duration::ZERO)?;
+    let failure = lock
+        .holder_error()
+        .ok_or("the record was written after all")?;
+    assert!(matches!(failure, Error::Io { .. }), "got {failure:?}");
+    // Held all the same: another thread waits and times out.
+    let other = path.clone();
+    let result = std::thread::spawn(move || Lock::acquire(&other, "waiter", SHORT_WAIT).map(drop))
+        .join()
+        .map_err(|_| "the waiter panicked")?;
+    assert!(
+        matches!(result, Err(Error::Locked { holder: None, .. })),
+        "got {result:?}"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_lock_whose_holder_record_cannot_be_written_is_still_acquired() -> TestResult {
+    use std::io::Read as _;
+    let name = "child_acquires_with_no_room_for_the_record";
+    // `sh` sets the limit and ignores the signal, and both survive the exec
+    // into this test binary.
+    let mut child = HeldByChild {
+        child: Command::new("/bin/sh")
+            .args(["-c", "ulimit -f 0 && trap '' XFSZ && exec \"$0\" \"$@\""])
+            .arg(std::env::current_exe()?)
+            .args([name, "--exact", "--ignored", "--test-threads=1"])
+            .env(NO_ROOM_ENV, "1")
+            .stdout(Stdio::piped())
+            .spawn()?,
+    };
+    let mut stdout = child.child.stdout.take().ok_or("no child stdout")?;
+    let reader = std::thread::spawn(move || {
+        let mut out = String::new();
+        let _ = stdout.read_to_string(&mut out);
+        out
+    });
+    release(child)?;
+    let out = reader.join().map_err(|_| "the reader panicked")?;
+    // The filter matched and the child's assertions ran.
+    assert!(out.contains("1 passed"), "the child ran no test: {out}");
+    Ok(())
+}
+
 #[cfg(unix)]
 mod unix {
     use super::TestResult;

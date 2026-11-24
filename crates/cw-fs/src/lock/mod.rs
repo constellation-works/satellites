@@ -29,6 +29,11 @@
 //!   as far as the platform can tell (see [`Holder`]); nothing decides
 //!   ownership from the record. On native Windows a timeout names no
 //!   holder, this process included.
+//! - **The record fails open.** It only explains a timeout to the next
+//!   waiter, so a lock whose record cannot be written or synced is still
+//!   acquired; the failure is kept on the [`Lock`] for the caller to warn
+//!   about ([`Lock::holder_error`]), and a waiter that times out meanwhile
+//!   names no holder.
 //! - **The lock file must be private.** On every platform a symbolic link at
 //!   its path is refused. On Unix it must also be owned by this user, open
 //!   to no group or other permission bit, and have one hard link, so the
@@ -65,6 +70,7 @@ pub struct Lock {
     file: File,
     path: PathBuf,
     key: held::Key,
+    holder_error: Option<Error>,
     not_send: PhantomData<*const ()>,
 }
 
@@ -87,7 +93,11 @@ impl Lock {
     ///   link, not a regular file, or has a second hard link.
     /// - [`Error::ForeignOwner`] or [`Error::Permissions`] when the lock file
     ///   is another user's or open to any group or other permission bit.
-    /// - [`Error::Io`] when the file cannot be opened, locked or written.
+    /// - [`Error::Io`] when the file cannot be opened, inspected or locked.
+    ///
+    /// Writing the holder record is not among them: once the lock is taken,
+    /// a record that cannot be written or synced leaves the lock acquired,
+    /// and the failure is returned by [`Lock::holder_error`].
     pub fn acquire(path: &Path, label: &str, wait: Duration) -> Result<Self> {
         let file = open_regular(path, Access::Lock, "open lock file")?;
         let meta = file.metadata().map_err(|e| Error::io("inspect", path, e))?;
@@ -103,14 +113,27 @@ impl Lock {
         // A link may have appeared while this call waited: check again
         // before writing the record. Dropping the file releases the lock.
         check_single_link(&file, path)?;
-        holder::record(&file, label).map_err(|e| Error::io("record the holder of", path, e))?;
+        // Fail open: the record is diagnostic, and the lock is already held.
+        let holder_error = holder::record(&file, label)
+            .err()
+            .map(|e| Error::io("record the holder of", path, e));
         held::insert(key.clone());
         Ok(Self {
             file,
             path: path.to_path_buf(),
             key,
+            holder_error,
             not_send: PhantomData,
         })
+    }
+
+    /// Why the holder record could not be written when this lock was taken,
+    /// or `None` when it was. Diagnostic only: the lock is held either way.
+    /// A caller may warn with it; nothing should decide from it. While it is
+    /// `Some`, a waiter that times out names no holder.
+    #[must_use]
+    pub fn holder_error(&self) -> Option<&Error> {
+        self.holder_error.as_ref()
     }
 
     /// The lock file this lock holds.
