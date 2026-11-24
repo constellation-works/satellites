@@ -21,6 +21,7 @@ cw-base:
 cw-fs: cw-base
 cw-testkit:
 cw-supervise:
+cw-sqlite: cw-base cw-fs
 '
 
 # crate: the modules its sources must not name (space-separated). Found in a

@@ -18,3 +18,9 @@ slow-timeout = { period = "15s", terminate-after = 2 }
 filter = "package(cw-supervise) & (binary(group) | binary(output))"
 threads-required = "num-test-threads"
 slow-timeout = { period = "15s", terminate-after = 2 }
+
+# cw-sqlite's transaction tests measure a lock wait; the same rule.
+[[profile.default.overrides]]
+filter = "package(cw-sqlite) & binary(transaction)"
+threads-required = "num-test-threads"
+slow-timeout = { period = "15s", terminate-after = 2 }
