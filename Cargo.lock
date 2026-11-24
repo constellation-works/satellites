@@ -33,6 +33,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "cw-testkit"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -17,6 +17,7 @@ set -u
 ALLOWED='
 cw-base:
 cw-fs: cw-base
+cw-testkit:
 '
 
 # crate: a regular expression of paths its sources must not name. Comment
