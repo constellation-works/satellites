@@ -11,6 +11,7 @@ use cw_fs::{Cap, Lock};
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -21,6 +22,9 @@ const STORE_WAIT: Duration = Duration::from_millis(100);
 const AUDIT_WAIT: Duration = Duration::from_secs(1);
 /// Both waits, with room for a slow runner: past this the audit line was
 /// held up by the program's lock.
+/// How long the child may take to say it holds the lock.
+const READY_WAIT: Duration = Duration::from_secs(10);
+
 /// Set on a child this file starts, naming the lock file it is to hold.
 const HOLD_ENV: &str = "CW_APP_TEST_HOLD_LOCK";
 
@@ -80,33 +84,52 @@ fn child_holds_the_lock_until_stdin_closes() -> TestResult {
     Ok(())
 }
 
+/// A child process, killed and reaped when dropped, so a failing test
+/// never leaves it holding the lock.
+struct Reaped(Child);
+
+impl Drop for Reaped {
+    fn drop(&mut self) {
+        // Already exited on the clean path: both calls then do nothing.
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 /// A child process holding the lock at `path`; it releases it and exits
-/// when its stdin is closed.
-fn hold_in_child(path: &Path) -> Result<Child, Box<dyn std::error::Error>> {
-    let mut child = Command::new(std::env::current_exe()?)
-        .args([
-            "child_holds_the_lock_until_stdin_closes",
-            "--exact",
-            "--ignored",
-            "--nocapture",
-            "--test-threads=1",
-        ])
-        .env(HOLD_ENV, path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()?;
-    let stdout = child.stdout.take().ok_or("no child stdout")?;
-    let mut lines = BufReader::new(stdout).lines();
-    loop {
-        let Some(line) = lines.next() else {
-            return Err("the child exited before taking the lock".into());
-        };
-        if line?.contains(READY) {
-            // Keep reading, so the child's last lines never meet a closed
-            // pipe.
-            std::thread::spawn(move || lines.for_each(drop));
-            return Ok(child);
-        }
+/// when its stdin is closed. Waits at most [`READY_WAIT`] for it to say it
+/// holds the lock.
+fn hold_in_child(path: &Path) -> Result<Reaped, Box<dyn std::error::Error>> {
+    let mut child = Reaped(
+        Command::new(std::env::current_exe()?)
+            .args([
+                "child_holds_the_lock_until_stdin_closes",
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(HOLD_ENV, path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?,
+    );
+    let stdout = child.0.stdout.take().ok_or("no child stdout")?;
+    let (ready_tx, ready_rx) = mpsc::channel();
+    // Read on a thread so the wait has a deadline; it keeps reading after
+    // the signal, so the child's last lines never meet a closed pipe.
+    std::thread::spawn(move || {
+        let mut lines = BufReader::new(stdout).lines();
+        let ready = lines
+            .by_ref()
+            .any(|line| line.is_ok_and(|l| l.contains(READY)));
+        let _ = ready_tx.send(ready);
+        lines.for_each(drop);
+    });
+    match ready_rx.recv_timeout(READY_WAIT) {
+        Ok(true) => Ok(child),
+        Ok(false) => Err("the child exited before taking the lock".into()),
+        Err(_) => Err("the child did not take the lock in time".into()),
     }
 }
 
@@ -136,8 +159,8 @@ fn a_command_blocked_on_the_program_lock_still_records_its_failure() -> TestResu
     assert_eq!(record.status, Status::Failure);
     assert_eq!(record.error_code.as_deref(), Some("store_busy"));
 
-    drop(holder.stdin.take());
-    let status = holder.wait()?;
+    drop(holder.0.stdin.take());
+    let status = holder.0.wait()?;
     assert!(status.success(), "the child failed: {status}");
     Ok(())
 }
