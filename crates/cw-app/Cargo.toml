@@ -1,6 +1,6 @@
 [package]
 name = "cw-app"
-version = "0.1.0"
+version.workspace = true
 description = "The one path from a CLI or MCP surface to a program's commands: the context a command runs in, a captured environment, and an append-only audit log."
 readme = "README.md"
 keywords = ["cli", "audit-log", "environment", "chokepoint"]
