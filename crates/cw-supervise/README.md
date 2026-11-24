@@ -25,7 +25,7 @@ let outcome = Run::new(command, Duration::from_secs(30)) // the deadline is requ
 
 | Type | Holds |
 |---|---|
-| `Outcome` | `end`, and the `stdout` and `stderr` captures |
+| `Outcome` | `end`, the `stdout` and `stderr` captures, and `swept` (cleanup reached the group and reaped the leader) |
 | `End` | `Exited(ExitStatus)`, `TimedOut` or `OutputLimit` |
 | `Captured` | `bytes`, `truncated` (more than the cap was written), `complete` (read to its end) |
 | `Cap` | `truncate(n)`: keep `n` bytes, drain the rest; `kill(n)`: keep `n` bytes, stop the group |
@@ -39,8 +39,8 @@ let outcome = Run::new(command, Duration::from_secs(30)) // the deadline is requ
   exits), `SIGKILL` to the group regardless, then the reap. The result is `End::TimedOut`
   with what was captured.
 - **Every path ends with a sweep**, a clean exit included: `SIGKILL` to the group while its
-  leader is unreaped, then the reap. No signal is sent after the reap. A drop guard does the
-  same on a panic or an early return.
+  leader is unreaped, then the reap, waited for at most 2 s. No signal is sent after the
+  reap. A drop guard does the same on a panic or an early return.
 - **Output is never lost silently.** After the sweep the readers get up to 2 s. A pipe still
   held then (by a process that left the group) is returned with what was read and
   `complete: false`, and the real exit status is kept. An interrupted read is retried.
@@ -59,9 +59,16 @@ environment. The crate ships no list of names.
 
 - A descendant that calls `setsid` or daemonizes is not swept; stopped descendants are not
   continued before the sweep.
-- The calling process must not ignore `SIGCHLD`.
-- Unix only. On any other platform every run returns `Error::Unsupported`; there is no
-  weaker fallback.
+- Such a descendant can keep a reader (or stdin writer) thread blocked, with its pipe, after
+  the run returns, until it closes the pipe. The crate is sized for command-line tools.
+- The grace after `SIGTERM` ends as soon as the leader exits, deliberately, as the design
+  decided.
+- When cleanup fails or cannot be verified, the run returns with `Outcome::swept` false
+  rather than waiting without bound.
+- Precondition: the calling process reaps its children only through this crate: no other
+  waiter, and `SIGCHLD` is neither ignored nor set with `SA_NOCLDWAIT`.
+- Linux and macOS only. On any other platform every run returns `Error::Unsupported`; there
+  is no weaker fallback.
 
 ## Errors
 

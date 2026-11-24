@@ -14,10 +14,20 @@ pub struct Outcome {
     /// What the child wrote to stderr; empty and complete when the run was
     /// [`combined`](crate::Run::combined).
     pub stderr: Captured,
+    /// The final `SIGKILL` reached the group and the leader was reaped.
+    ///
+    /// `false` when cleanup failed or could not be verified: the group could
+    /// not be signalled (the leader left it while alive, or this process may
+    /// not signal it), or the leader was still alive 2 s after its own
+    /// `SIGKILL` and is left unreaped rather than waited for without bound. `true` cannot vouch for a member this process may not
+    /// signal: the kernel reports a group signal as sent once any member got
+    /// it, and once the leader has exited a refused group signal is read as
+    /// "only the exited leader was left" (macOS refuses a group of zombies).
+    pub swept: bool,
 }
 
-/// Why a run ended. Its group has been swept and its leader reaped in every
-/// case.
+/// Why a run ended. The group has been sent `SIGKILL` and the leader
+/// reaped in every case, unless [`Outcome::swept`] says otherwise.
 #[derive(Debug)]
 pub enum End {
     /// The leader exited on its own, with this status. A signal that ended it

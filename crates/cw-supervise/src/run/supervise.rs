@@ -1,6 +1,6 @@
-//! The run itself, on Unix: spawn, watch, stop, sweep, reap, drain.
+//! The run itself, on Linux and macOS: spawn, watch, stop, sweep, reap, drain.
 
-use super::group::Group;
+use super::group::{Group, POLL_MAX, POLL_MIN};
 use super::reader::Reader;
 use super::{Captured, End, Outcome, Output, Overflow, Run};
 use crate::Error;
@@ -11,12 +11,6 @@ use std::process::{Child, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
-
-/// The first wait between two looks at the leader; it doubles to [`POLL_MAX`].
-const POLL_MIN: Duration = Duration::from_millis(1);
-
-/// The longest wait between two looks at the leader.
-const POLL_MAX: Duration = Duration::from_millis(20);
 
 /// How long the readers get after the sweep to reach end of file.
 const DRAIN_WAIT: Duration = Duration::from_secs(2);
@@ -70,18 +64,25 @@ pub(super) fn run(run: Run) -> Result<Outcome, Error> {
     let started = Instant::now();
 
     let (overflow_tx, overflow) = mpsc::channel();
+    // A thread the OS cannot create fails the run; the guard sweeps.
     let readers = match group.child_mut() {
-        Some(child) => start_io(child, input, output, combined, &overflow_tx),
+        Some(child) => {
+            start_io(child, input, output, combined, &overflow_tx).map_err(spawn_error)?
+        }
         None => Vec::new(),
     };
     drop(overflow_tx);
 
-    let watched = watch(&mut group, started + deadline, &overflow);
+    // A deadline or grace too far to represent (`Duration::MAX`) is no
+    // bound at all, not a panic.
+    let watched = watch(&mut group, started.checked_add(deadline), &overflow);
     if watched == Watched::TimedOut {
-        group.signal(Signal::TERM);
-        wait_for_leader(&mut group, Instant::now() + grace);
+        // A failure here is met by the SIGKILL and the reap that follow.
+        let _ = group.signal(Signal::TERM);
+        group.wait_for_leader(Instant::now().checked_add(grace));
     }
     let reaped = group.reap();
+    let swept = reaped.as_ref().is_some_and(|reaped| reaped.swept);
 
     let drained_by = Instant::now() + DRAIN_WAIT;
     let mut streams = readers.into_iter().map(|reader| reader.collect(drained_by));
@@ -95,12 +96,12 @@ pub(super) fn run(run: Run) -> Result<Outcome, Error> {
         Watched::TimedOut => End::TimedOut,
         Watched::OutputLimit => End::OutputLimit,
         Watched::Exited if kill_overflowed => End::OutputLimit,
-        Watched::Exited => match reaped {
+        Watched::Exited => match reaped.and_then(|reaped| reaped.status) {
             Some(Ok(status)) => End::Exited(status),
             Some(Err(source)) => return Err(spawn_error(source)),
             None => {
                 return Err(spawn_error(io::Error::other(
-                    "the child was reaped before its status was read",
+                    "the child's exit status could not be collected",
                 )));
             }
         },
@@ -109,6 +110,7 @@ pub(super) fn run(run: Run) -> Result<Outcome, Error> {
         end,
         stdout: stdout.map_or_else(empty, |(_, captured)| captured),
         stderr: stderr.map_or_else(empty, |(_, captured)| captured),
+        swept,
     })
 }
 
@@ -119,35 +121,38 @@ fn start_io(
     output: Output,
     combined: Option<io::PipeReader>,
     overflow: &Sender<()>,
-) -> Vec<Reader> {
+) -> io::Result<Vec<Reader>> {
     if let (Some(mut pipe), Some(bytes)) = (child.stdin.take(), input) {
         // A child that stops reading gets its pipe closed by the sweep at the
         // latest; the write then fails and the thread ends.
-        thread::spawn(move || {
-            let _ = pipe.write_all(&bytes);
-        });
+        thread::Builder::new()
+            .name(String::from("cw-supervise-stdin"))
+            .spawn(move || {
+                let _ = pipe.write_all(&bytes);
+            })?;
     }
     let mut readers = Vec::with_capacity(2);
     match (output, combined) {
         (Output::Combined(cap), Some(log)) => {
-            readers.push(Reader::start(log, cap, overflow.clone()));
+            readers.push(Reader::start(log, cap, overflow.clone())?);
         }
         (Output::Separate { stdout, stderr }, _) => {
             if let Some(pipe) = child.stdout.take() {
-                readers.push(Reader::start(pipe, stdout, overflow.clone()));
+                readers.push(Reader::start(pipe, stdout, overflow.clone())?);
             }
             if let Some(pipe) = child.stderr.take() {
-                readers.push(Reader::start(pipe, stderr, overflow.clone()));
+                readers.push(Reader::start(pipe, stderr, overflow.clone())?);
             }
         }
         (Output::Combined(_), None) => {}
     }
-    readers
+    Ok(readers)
 }
 
 /// Watch until the leader exits, the deadline passes, or a stream passes a
 /// kill cap, whichever comes first.
-fn watch(group: &mut Group, deadline: Instant, overflow: &Receiver<()>) -> Watched {
+/// `None` is a deadline too far away to represent.
+fn watch(group: &mut Group, deadline: Option<Instant>, overflow: &Receiver<()>) -> Watched {
     let mut poll = POLL_MIN;
     loop {
         if overflow.try_recv().is_ok() {
@@ -156,30 +161,22 @@ fn watch(group: &mut Group, deadline: Instant, overflow: &Receiver<()>) -> Watch
         if group.leader_exited() {
             return Watched::Exited;
         }
-        let now = Instant::now();
-        if now >= deadline {
-            return Watched::TimedOut;
-        }
-        let wait = poll.min(deadline - now);
+        let wait = match deadline {
+            Some(deadline) => {
+                let now = Instant::now();
+                if now >= deadline {
+                    return Watched::TimedOut;
+                }
+                poll.min(deadline - now)
+            }
+            None => poll,
+        };
         match overflow.recv_timeout(wait) {
             Ok(()) => return Watched::OutputLimit,
             Err(RecvTimeoutError::Timeout) => {}
             // Every reader has finished; nothing can overflow any more.
             Err(RecvTimeoutError::Disconnected) => thread::sleep(wait),
         }
-        poll = (poll * 2).min(POLL_MAX);
-    }
-}
-
-/// Wait until the leader exits or `until` passes.
-fn wait_for_leader(group: &mut Group, until: Instant) {
-    let mut poll = POLL_MIN;
-    while !group.leader_exited() {
-        let now = Instant::now();
-        if now >= until {
-            return;
-        }
-        thread::sleep(poll.min(until - now));
         poll = (poll * 2).min(POLL_MAX);
     }
 }

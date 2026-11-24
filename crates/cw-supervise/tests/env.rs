@@ -1,7 +1,7 @@
 //! The environment helper, through the public API: what a child actually
 //! receives, read back with `env`.
 
-#![cfg(unix)]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 mod support;
 

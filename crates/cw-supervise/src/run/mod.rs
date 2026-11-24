@@ -20,12 +20,12 @@
 //! ```
 
 mod cap;
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod group;
 mod outcome;
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod reader;
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod supervise;
 
 pub use cap::{Cap, Overflow};
@@ -140,13 +140,13 @@ impl Run {
     ///
     /// [`Error::Spawn`] when the child cannot be started, keeping the program
     /// and the operating-system error; [`Error::Unsupported`] on a platform
-    /// that is not Unix.
+    /// other than Linux and macOS.
     pub fn run(self) -> Result<Outcome, Error> {
-        #[cfg(unix)]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             supervise::run(self)
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             drop(self);
             Err(Error::Unsupported)

@@ -17,8 +17,10 @@ use std::io;
 /// code, so adding a variant is meant to break its match.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// The child could not be started (or, when the calling process ignores
-    /// `SIGCHLD`, its exit status could not be collected).
+    /// The child could not be started, its supervision could not be set up
+    /// (the OS could not create a pipe or a thread), or its exit status could
+    /// not be collected (the leader was reaped elsewhere; see the crate's
+    /// preconditions).
     ///
     /// `source.kind()` tells "not installed" ([`io::ErrorKind::NotFound`])
     /// from "not allowed" or any other failure.
@@ -30,7 +32,7 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
-    /// This platform has no process groups to sweep, so nothing is run.
-    #[error("cannot run a supervised child on this platform: it needs Unix process groups")]
+    /// This platform is not Linux or macOS, so nothing is run.
+    #[error("cannot run a supervised child on this platform: only Linux and macOS are supported")]
     Unsupported,
 }

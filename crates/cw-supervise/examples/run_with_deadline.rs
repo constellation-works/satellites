@@ -1,7 +1,7 @@
 //! Run a shell command within bounds and show how it ended: once to a clean
 //! exit, once past its deadline, once past a kill cap.
 //!
-//! Run with `cargo run -p cw-supervise --example run_with_deadline`. Unix
+//! Run with `cargo run -p cw-supervise --example run_with_deadline`. Linux and macOS
 //! only; elsewhere every run returns `Error::Unsupported`.
 
 use cw_supervise::{Cap, End, Outcome, Run, env};

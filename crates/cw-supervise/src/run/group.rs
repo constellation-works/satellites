@@ -2,17 +2,40 @@
 //! guard that sweeps it on a panic or an early return.
 
 use rustix::io::Errno;
-use rustix::process::{Pid, Signal, WaitId, WaitIdOptions, kill_process_group, waitid};
+use rustix::process::{
+    Pid, Signal, WaitId, WaitIdOptions, kill_process, kill_process_group, waitid,
+};
 use std::io;
 use std::process::{Child, ExitStatus};
+use std::thread;
+use std::time::{Duration, Instant};
+
+/// The first wait between two looks at the leader; it doubles to [`POLL_MAX`].
+pub(super) const POLL_MIN: Duration = Duration::from_millis(1);
+
+/// The longest wait between two looks at the leader.
+pub(super) const POLL_MAX: Duration = Duration::from_millis(20);
+
+/// How long the leader gets to exit after the final `SIGKILL` before it is
+/// left unreaped rather than waited for without bound.
+const REAP_WAIT: Duration = Duration::from_secs(2);
 
 /// A spawned child that leads its own process group. Until [`Group::reap`]
 /// takes it, dropping the guard sweeps the group and reaps the leader.
 pub(super) struct Group {
     child: Option<Child>,
-    /// The kernel reaped the leader itself (the calling process ignores
-    /// `SIGCHLD`): its id may be reused, so nothing is signalled any more.
+    /// The kernel or another waiter reaped the leader: its id may be reused,
+    /// so nothing is signalled any more.
     reaped_elsewhere: bool,
+}
+
+/// What the final sweep and reap found.
+pub(super) struct Reaped {
+    /// The leader's exit status; `None` when it was not reaped within
+    /// [`REAP_WAIT`] and is left unreaped.
+    pub(super) status: Option<io::Result<ExitStatus>>,
+    /// `SIGKILL` reached the group and the leader was reaped.
+    pub(super) swept: bool,
 }
 
 impl Group {
@@ -42,31 +65,82 @@ impl Group {
                 self.reaped_elsewhere = true;
                 true
             }
-            // Any other failure is retried at the next poll; the deadline
-            // still bounds the run.
+            // Any other failure is retried at the next poll; every wait on
+            // the leader is bounded.
             Err(_) => false,
         }
     }
 
-    /// Signal the whole group. Never after the reap: the leader is held, and
-    /// not reaped elsewhere.
-    pub(super) fn signal(&self, signal: Signal) {
-        if self.reaped_elsewhere {
-            return;
-        }
-        if let Some(child) = &self.child {
-            // The leader is unreaped, so the group exists; a failure here
-            // leaves the reap below to end the leader.
-            let _ = kill_process_group(Pid::from_child(child), signal);
+    /// Wait until the leader exits (true) or `until` passes (false). `None`
+    /// waits without a bound of its own.
+    pub(super) fn wait_for_leader(&mut self, until: Option<Instant>) -> bool {
+        let mut poll = POLL_MIN;
+        loop {
+            if self.leader_exited() {
+                return true;
+            }
+            let wait = match until {
+                Some(until) => {
+                    let now = Instant::now();
+                    if now >= until {
+                        return false;
+                    }
+                    poll.min(until - now)
+                }
+                None => poll,
+            };
+            thread::sleep(wait);
+            poll = (poll * 2).min(POLL_MAX);
         }
     }
 
-    /// Sweep the group with `SIGKILL` and reap the leader. `None` when it was
-    /// already reaped by an earlier call.
-    pub(super) fn reap(&mut self) -> Option<io::Result<ExitStatus>> {
-        self.signal(Signal::KILL);
+    /// Signal the whole group, never after the reap: only while the leader
+    /// is held and not reaped elsewhere. Whether the signal was sent.
+    pub(super) fn signal(&self, signal: Signal) -> Result<(), Errno> {
+        if self.reaped_elsewhere {
+            return Err(Errno::CHILD);
+        }
+        let Some(child) = &self.child else {
+            return Err(Errno::CHILD);
+        };
+        kill_process_group(Pid::from_child(child), signal)
+    }
+
+    /// Sweep the group with `SIGKILL`, and the leader by its id too (safe
+    /// while it is unreaped), in case it left the group. Then reap the
+    /// leader, waiting at most [`REAP_WAIT`]: a leader that is still alive
+    /// then (this process may not signal it) is left unreaped rather than
+    /// waited for without bound. `None` when an earlier call took it.
+    pub(super) fn reap(&mut self) -> Option<Reaped> {
+        let leader_had_exited = self.leader_exited();
+        // A group whose only member is the exited, unreaped leader may
+        // refuse the signal (macOS answers EPERM): nothing was left to kill.
+        // While the leader was alive, a refusal means it left the group or
+        // may not be signalled, and the sweep is not verified.
+        let group_killed = match self.signal(Signal::KILL) {
+            Ok(()) => true,
+            Err(Errno::SRCH | Errno::PERM) => leader_had_exited,
+            Err(_) => false,
+        };
+        if !self.reaped_elsewhere
+            && let Some(child) = &self.child
+        {
+            let _ = kill_process(Pid::from_child(child), Signal::KILL);
+        }
+        let exited = self.wait_for_leader(Some(Instant::now() + REAP_WAIT));
         let mut child = self.child.take()?;
-        Some(child.wait())
+        if !exited {
+            return Some(Reaped {
+                status: None,
+                swept: false,
+            });
+        }
+        let status = child.wait();
+        let swept = group_killed && status.is_ok();
+        Some(Reaped {
+            status: Some(status),
+            swept,
+        })
     }
 }
 
