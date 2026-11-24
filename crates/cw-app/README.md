@@ -45,7 +45,10 @@ if let Some(warning) = warning { eprintln!("warning: {warning}") }
   and logs nothing, and hands the failure to the surface as a warning.
 - **Versioned.** Every line carries `format` (now 3). Formats 1 (no actor) and 2 (no
   surface) are read through declared upgrade steps; a newer line is refused in its place
-  while the other lines are read. A torn last line is left out.
+  while the other lines are read. A torn last line is left out by the reader, and closed with a
+  line break by the next append so that record stays whole. An append reads the log's last
+  64 KiB (`cw_fs::read_tail`) under the lock and refuses a log whose newest line is newer than
+  this build writes, or cannot be found there; the refusal is the surface's warning.
 
 ## The environment
 

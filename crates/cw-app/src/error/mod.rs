@@ -56,6 +56,32 @@ pub enum Error {
         /// The newest format this build reads.
         supported: u32,
     },
+    /// The log's newest line is in a format newer than this build writes,
+    /// so this build does not append to it.
+    #[error(
+        "{}: the newest audit line has format {found}, newer than the {supported} this build writes; not appending; upgrade this tool",
+        path.display()
+    )]
+    NewerLog {
+        /// The audit log.
+        path: PathBuf,
+        /// The format of its newest line.
+        found: u32,
+        /// The newest format this build writes.
+        supported: u32,
+    },
+    /// The log's last bytes hold no whole line, so the format of its newest
+    /// line is unknown and this build does not append to it.
+    #[error(
+        "{}: no whole audit line in its last {tail} bytes, so its format is unknown; not appending",
+        path.display()
+    )]
+    UnknownLog {
+        /// The audit log.
+        path: PathBuf,
+        /// How many bytes of its end were read.
+        tail: u64,
+    },
 }
 
 impl Error {
@@ -68,7 +94,8 @@ impl Error {
             Self::Timestamp(error) => error.kind(),
             Self::Encode(_) => Kind::Internal,
             Self::Corrupt { .. } => Kind::Corrupt,
-            Self::NewerFormat { .. } => Kind::Incompatible,
+            Self::NewerFormat { .. } | Self::NewerLog { .. } => Kind::Incompatible,
+            Self::UnknownLog { .. } => Kind::Corrupt,
         }
     }
 }

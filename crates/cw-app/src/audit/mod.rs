@@ -21,6 +21,10 @@
 //!   [`AuditWarning`] value to print. This crate prints and logs nothing.
 //! - **Versioned.** Each line carries its `format`; the reader upgrades an
 //!   older line through declared steps and refuses a newer one.
+//!   An append reads the log's newest line first and refuses a log in a
+//!   newer format (or one whose newest line it cannot find), so an older
+//!   build never mixes its lines into a newer log. A torn last line is
+//!   closed before the next record, so that record stays whole.
 
 mod actor;
 mod line;

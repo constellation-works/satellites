@@ -1,7 +1,9 @@
 //! The chokepoint: what one command leaves in the audit log, and how its
 //! error and its audit failure reach the caller.
 
-use cw_app::{App, AuditLog, AuditMeta, Ctx, Origin, Runtime, Status, Surface, exec};
+use cw_app::{
+    App, AuditLog, AuditMeta, Ctx, Error as AuditError, Origin, Runtime, Status, Surface, exec,
+};
 use cw_base::{Clock, Error, Kind};
 use cw_fs::Cap;
 
@@ -277,5 +279,73 @@ fn an_actor_that_is_not_an_identifier_is_never_written_verbatim() -> TestResult 
         record.actor.as_deref(),
         Some(cw_app::audit::ACTOR_PLACEHOLDER)
     );
+    Ok(())
+}
+
+#[test]
+fn a_torn_last_line_does_not_swallow_the_next_record() -> TestResult {
+    let (_scratch, root) = data_dir()?;
+    cw_fs::create_private_dir(&root)?;
+    let log = AuditLog::new(&root);
+    let whole = r#"{"format":3,"at":"2026-01-01T00:00:00Z","surface":"cli","actor":null,"command":"note add","status":"success","target":"n-1","error_code":null,"duration_ms":1}"#;
+    // A crash during the second append left part of its line.
+    cw_fs::append(
+        &log.path(),
+        format!("{whole}\n{{\"format\":3,\"at").as_bytes(),
+    )?;
+    let runtime = Runtime::new(&root, ());
+
+    let (result, warning) = exec::<Notes>(
+        &runtime,
+        &origin(),
+        Command::Add {
+            body: "x".to_owned(),
+        },
+    )
+    .settle();
+    assert!(result.is_ok());
+    assert!(warning.is_none(), "{warning:?}");
+
+    let lines = log.read(Cap::bytes(1 << 16))?;
+    let [Ok(first), Err(AuditError::Corrupt { line: 2, .. }), Ok(new)] = lines.as_slice() else {
+        panic!("a whole line, the torn one, then the new record expected, got {lines:?}");
+    };
+    assert_eq!(first.target.as_deref(), Some("n-1"));
+    assert_eq!(new.target.as_deref(), Some("n-1"));
+    assert_eq!(new.actor.as_deref(), Some("agent-7"));
+    Ok(())
+}
+
+#[test]
+fn a_log_in_a_newer_format_is_not_appended_to() -> TestResult {
+    let (_scratch, root) = data_dir()?;
+    cw_fs::create_private_dir(&root)?;
+    let log = AuditLog::new(&root);
+    let newer = b"{\"format\":99,\"at\":\"2026-01-03T00:00:00Z\",\"command\":\"note add\"}\n";
+    cw_fs::append(&log.path(), newer)?;
+    let runtime = Runtime::new(&root, ());
+
+    let (result, warning) = exec::<Notes>(
+        &runtime,
+        &origin(),
+        Command::Add {
+            body: "x".to_owned(),
+        },
+    )
+    .settle();
+    // The command's result stands; the refusal is the warning.
+    assert!(result.is_ok());
+    let Some(warning) = warning else {
+        return Err("the refused append was expected to come back as a warning".into());
+    };
+    assert!(matches!(
+        warning.error(),
+        AuditError::NewerLog {
+            found: 99,
+            supported: cw_app::audit::FORMAT,
+            ..
+        }
+    ));
+    assert_eq!(std::fs::read(log.path())?, newer);
     Ok(())
 }
