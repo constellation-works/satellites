@@ -4,7 +4,8 @@
 //! - **Durable.** [`write_atomic`] and [`create_new`] write a temporary file
 //!   in the same directory, flush it, rename it into place and flush the
 //!   directory, so a crash leaves the old file or the new one, never a torn
-//!   one. A filesystem that cannot flush a directory at all (it answers
+//!   one, and (where the directory is flushed) not the old one once the call
+//!   has returned. A filesystem that cannot flush a directory at all (it answers
 //!   `EINVAL` or `ENOTSUP`) is tolerated; any other failure is an error. On
 //!   native Windows the directory flush is a no-op: a directory cannot be
 //!   opened there to flush it, so the rename is as durable as the volume

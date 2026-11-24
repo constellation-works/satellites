@@ -306,6 +306,33 @@ fn a_long_label_is_cut_so_a_waiter_can_still_read_the_holder() -> TestResult {
     Ok(())
 }
 
+/// Linux identifies a holder by its pid and start time, so a record
+/// without a start time (an older build's) names nobody, even when its pid
+/// is alive: here it is this very process.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_record_without_a_start_time_is_not_named_on_linux() -> TestResult {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join(".lock");
+    std::fs::write(
+        &path,
+        format!(
+            "{{\"pid\":{},\"time\":\"2026-01-01T00:00:00Z\",\"label\":\"legacy\"}}\n",
+            std::process::id()
+        ),
+    )?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)?;
+    held.try_lock()?;
+    let holder = locked_holder(Lock::acquire(&path, "waiter", SHORT_WAIT))?;
+    assert_eq!(holder, None, "a record of unknown identity was named");
+    Ok(())
+}
+
 #[cfg(unix)]
 mod unix {
     use super::TestResult;

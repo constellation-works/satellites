@@ -20,13 +20,15 @@
 //!   waits out the deadline and fails with [`crate::Error::Locked`].
 //! - **A deadline is required.** The wait polls, starting at 1 ms and
 //!   doubling to 20 ms, so a lock released quickly is taken quickly. No
-//!   attempt is made after the deadline.
+//!   attempt is started after the deadline. The deadline bounds the
+//!   waiting, not the instant the lock is taken: an attempt that starts just
+//!   before it may finish a few microseconds after.
 //! - **The holder is recorded** in the lock file as one JSON line (pid,
 //!   time, label) after acquiring, and cleared on release. A waiter that
 //!   times out names the holder only while the recorded process is alive,
 //!   as far as the platform can tell (see [`Holder`]); nothing decides
-//!   ownership from the record. On native Windows a timeout does not name
-//!   another process.
+//!   ownership from the record. On native Windows a timeout names no
+//!   holder, this process included.
 //! - **The lock file must be private.** On every platform a symbolic link at
 //!   its path is refused. On Unix it must also be owned by this user, open
 //!   to no group or other permission bit, and have one hard link, so the
@@ -74,7 +76,8 @@ impl Lock {
     /// the time so a waiter that times out can say who is in the way. The
     /// whole record is at most 4096 bytes, so a longer label is recorded cut
     /// at a character boundary. A `wait` of zero tries once; no attempt is
-    /// made after `wait` has passed.
+    /// started after `wait` has passed, though one started just before may
+    /// finish a few microseconds after.
     ///
     /// # Errors
     ///

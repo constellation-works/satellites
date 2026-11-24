@@ -22,8 +22,8 @@ use std::path::Path;
 /// Check an existing private directory; `Ok(false)` when it does not exist.
 ///
 /// A symbolic link at `dir` is refused, not followed, even when it leads to
-/// a private directory or nowhere: whoever can replace the link can point
-/// the data anywhere. A link in a component above `dir` is used as given.
+/// a private directory or nowhere, and however `dir` is spelled (`link/`
+/// included): whoever can replace the link can point the data anywhere. A link in a component above `dir` is used as given.
 ///
 /// # Errors
 ///
@@ -31,7 +31,10 @@ use std::path::Path;
 /// [`Error::Permissions`] when the directory is refused; [`Error::Io`] when
 /// it cannot be inspected or is not a directory.
 pub fn inspect_dir(dir: &Path) -> Result<bool> {
-    let meta = match std::fs::symlink_metadata(dir) {
+    // Without its trailing separators: `link/` makes the kernel resolve the
+    // link before `lstat` could report it.
+    let entry: std::path::PathBuf = dir.components().collect();
+    let meta = match std::fs::symlink_metadata(&entry) {
         Ok(meta) => meta,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(e) => return Err(Error::io("inspect", dir, e)),

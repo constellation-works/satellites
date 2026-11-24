@@ -13,13 +13,14 @@
 //!
 //! - **Linux** records the process's start time beside its pid and reads
 //!   `/proc/<pid>/stat` back: a process that has exited, a zombie, or a
-//!   later process that reused the pid is not named.
+//!   later process that reused the pid is not named, and neither is the pid
+//!   of a record without a start time, whose process cannot be identified.
 //! - **Other Unix** asks the kernel whether the pid exists (signal 0). A
 //!   zombie that its parent has not reaped, and an unrelated process that
 //!   reused the pid, still count as alive there.
-//! - **Native Windows** never names another process: a second handle cannot
-//!   read the record while the holder's lock covers the file, and there is
-//!   no liveness probe here. Only a record of this very process is named.
+//! - **Native Windows** names no holder, this process included: a second
+//!   handle cannot read the record while the holder's lock covers the file,
+//!   and there is no liveness probe here.
 
 use cw_base::Clock;
 use std::fmt;
@@ -33,10 +34,10 @@ const RECORD_CAP: usize = 4096;
 ///
 /// A waiter names the holder only while the process that wrote the record
 /// is alive. On Linux that is checked against the process's start time, so
-/// an exited process, a zombie or a reused pid is not named. Elsewhere on
-/// Unix only the pid's existence is checked: a zombie, or an unrelated
-/// process that reused the pid, may be named. Native Windows names no other
-/// process.
+/// an exited process, a zombie, a reused pid or a record without a start
+/// time is not named. Elsewhere on Unix only the pid's existence is checked:
+/// a zombie, or an unrelated process that reused the pid, may be named.
+/// Native Windows names no holder.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Holder {
     /// The holder's process id.
@@ -111,16 +112,18 @@ mod identity {
 
     /// The state and start time of `pid`, or `None` when it has no entry.
     fn stat(pid: u32) -> Option<(char, u64)> {
-        let mut text = String::new();
+        let mut bytes = Vec::new();
         std::fs::File::open(format!("/proc/{pid}/stat"))
             .ok()?
             .take(STAT_CAP)
-            .read_to_string(&mut text)
+            .read_to_end(&mut bytes)
             .ok()?;
-        // The command name, in parentheses, may hold spaces and `)`; the
-        // fields after the last `)` are plain. State is field 3, start time
-        // field 22: the first and the twentieth after the name.
-        let rest = &text[text.rfind(')')? + 1..];
+        // The command name, in parentheses, may hold any bytes, `)` and
+        // invalid UTF-8 included; the fields after the last `)` are plain
+        // ASCII. State is field 3, start time field 22: the first and the
+        // twentieth after the name.
+        let after = bytes.iter().rposition(|b| *b == b')')? + 1;
+        let rest = std::str::from_utf8(&bytes[after..]).ok()?;
         let mut fields = rest.split_whitespace();
         let state = fields.next()?.chars().next()?;
         let start = fields.nth(18)?.parse().ok()?;
@@ -132,13 +135,17 @@ mod identity {
         stat(pid).map(|(_, start)| start)
     }
 
-    /// Whether `pid` is a running process (not exited, not a zombie) and,
-    /// when the record has a start time, the same process that wrote it.
+    /// Whether `pid` is a running process (not exited, not a zombie) with
+    /// the start time the record holds. A record without one (written by an
+    /// older build, or when `/proc` could not be read) names nobody: the
+    /// process behind its pid cannot be known to be the one that wrote it.
     pub(super) fn wrote_and_lives(pid: u32, start: Option<u64>) -> bool {
+        let Some(recorded) = start else {
+            return false;
+        };
         match stat(pid) {
-            None => false,
-            Some(('Z' | 'X' | 'x', _)) => false,
-            Some((_, now)) => start.is_none_or(|recorded| recorded == now),
+            None | Some(('Z' | 'X' | 'x', _)) => false,
+            Some((_, now)) => recorded == now,
         }
     }
 }
@@ -170,16 +177,18 @@ mod identity {
 
 #[cfg(not(unix))]
 mod identity {
-    //! Without a liveness probe, only this process is known to be alive.
+    //! Native Windows names no holder: the holder's lock covers the record,
+    //! so even a second handle of the same process cannot read it, and
+    //! there is no liveness probe here.
 
     /// No start time is recorded here.
     pub(super) fn start_of(_pid: u32) -> Option<u64> {
         None
     }
 
-    /// Whether `pid` is this process.
-    pub(super) fn wrote_and_lives(pid: u32, _start: Option<u64>) -> bool {
-        pid == std::process::id()
+    /// Never: see the module docs.
+    pub(super) fn wrote_and_lives(_pid: u32, _start: Option<u64>) -> bool {
+        false
     }
 }
 

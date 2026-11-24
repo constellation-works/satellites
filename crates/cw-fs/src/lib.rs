@@ -23,7 +23,7 @@
 //! - a symbolic link is still refused, but the owner, mode and hard-link
 //!   checks are skipped;
 //! - the directory flush after a rename is a no-op;
-//! - a lock timeout does not name the holder;
+//! - a lock timeout names no holder, this process included;
 //! - re-entry is caught only for the same spelling of the lock's path.
 
 pub mod dir;

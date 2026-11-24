@@ -64,8 +64,8 @@ mod unix {
             matches!(err, Error::Permissions { mode, .. } if mode == want_mode),
             "got {err:?}"
         );
-        // The path is quoted, so the remedy is one shell word.
-        let chmod = format!("chmod {fix} '{}'", path.display());
+        // Options end before the path, and the path is one shell word.
+        let chmod = format!("chmod {fix} -- '{}'", path.display());
         assert!(message.contains(&chmod), "{message:?} lacks {chmod:?}");
         Ok(())
     }
@@ -88,6 +88,23 @@ mod unix {
         let err = inspect_dir(&dangling)
             .err()
             .ok_or("a dangling link passed")?;
+        assert!(matches!(err, Error::Symlink { .. }), "got {err:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_symlinked_directory_spelled_with_a_trailing_separator_is_refused() -> TestResult {
+        use cw_fs::list;
+        let dir = private_tempdir()?;
+        std::os::unix::fs::symlink(dir.path().join("root"), dir.path().join("link"))?;
+        std::os::unix::fs::symlink(dir.path().join("nowhere"), dir.path().join("dangling"))?;
+        let link = Path::new(dir.path()).join("link/");
+        let err = inspect_dir(&link).err().ok_or("link/ passed")?;
+        assert!(matches!(err, Error::Symlink { .. }), "got {err:?}");
+        let err = list(&link).err().ok_or("link/ was listed")?;
+        assert!(matches!(err, Error::Symlink { .. }), "got {err:?}");
+        let dangling = Path::new(dir.path()).join("dangling/");
+        let err = inspect_dir(&dangling).err().ok_or("dangling/ passed")?;
         assert!(matches!(err, Error::Symlink { .. }), "got {err:?}");
         Ok(())
     }

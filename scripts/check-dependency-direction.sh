@@ -49,13 +49,20 @@ row() {
   printf '%s\n' "$1" | sed -n "s/^$2:[[:space:]]*//p"
 }
 
-# One line per kit crate: "<name> <manifest dir> <kit dependency>...".
-graph=$(cargo metadata --format-version 1 --no-deps --manifest-path "$root/Cargo.toml" |
-  jq -r '.packages[] | select(.name | startswith("cw-"))
-    | [.name, (.manifest_path | sub("/Cargo.toml$"; ""))]
-      + ([.dependencies[].name | select(startswith("cw-"))] | unique)
-    | join(" ")') ||
+# Cargo's own status decides whether there is a graph at all: a manifest it
+# cannot read must not look like a workspace with no kit crates.
+metadata=$(cargo metadata --format-version 1 --no-deps --manifest-path "$root/Cargo.toml") ||
   { printf 'dependency direction: cannot run: cargo metadata failed\n' >&2; exit 2; }
+
+# One line per kit crate, tab-separated so a path may hold spaces:
+# "<name>\t<manifest dir>\t<kit dependencies, space-separated>".
+tab=$(printf '\t')
+graph=$(printf '%s\n' "$metadata" |
+  jq -er '[.packages[] | select(.name | startswith("cw-"))
+    | [.name, (.manifest_path | sub("/Cargo.toml$"; "")),
+       ([.dependencies[].name | select(startswith("cw-"))] | unique | join(" "))]
+    | join("\t")] | join("\n")') ||
+  { printf 'dependency direction: cannot run: cargo metadata gave no package list\n' >&2; exit 2; }
 
 # statements <file>: the Rust source with line comments removed, whitespace
 # collapsed, and one statement (up to `;`) per line.
@@ -69,7 +76,7 @@ edge='([^A-Za-z0-9_]|$)'
 [ -n "$graph" ] || printf 'dependency direction: no kit crates yet\n' >&2
 # The loop runs in a subshell (it reads a pipe), so it hands its status out.
 printf '%s\n' "$graph" | {
-while read -r crate dir deps; do
+while IFS=$tab read -r crate dir deps; do
   [ -n "$crate" ] || continue
   if ! printf '%s\n' "$ALLOWED" | grep -q "^$crate:"; then
     fail "$crate has no row in ALLOWED in scripts/check-dependency-direction.sh; add one"
@@ -88,13 +95,19 @@ while read -r crate dir deps; do
     # A path through the module, or a grouped `use` that lists it.
     direct="(^|[^A-Za-z0-9_:])(::)?$parent ?:: ?$leaf$edge"
     grouped="(^|[^A-Za-z0-9_:])(::)?$parent ?:: ?\{.*[{,] ?$leaf$edge"
-    for file in $(find "$dir/src" -name '*.rs' 2>/dev/null | LC_ALL=C sort); do
-      hits=$(statements "$file" | grep -E "$direct|$grouped")
-      [ -n "$hits" ] || continue
-      fail "$crate names $module, which its row forbids, in ${file#"$root"/}:"
-      # A statement can be long; its start is enough to find it.
-      printf '%s\n' "$hits" | sed 's/^ *//' | cut -c1-160 | sed 's/^/    /' >&2
-    done
+    # One line per offending statement, "<file>: <statement>"; a file name
+    # may hold spaces, so it is read whole from each line of `find`.
+    hits=$(find "$dir/src" -name '*.rs' 2>/dev/null | LC_ALL=C sort |
+      while IFS= read -r file; do
+        statements "$file" | grep -E "$direct|$grouped" | sed 's/^ *//' |
+          while IFS= read -r statement; do
+            printf '%s: %s\n' "${file#"$dir"/}" "$statement"
+          done
+      done)
+    [ -n "$hits" ] || continue
+    fail "$crate names $module, which its row forbids:"
+    # A statement can be long; its start is enough to find it.
+    printf '%s\n' "$hits" | cut -c1-160 | sed 's/^/    /' >&2
   done
 done
 exit "$status"

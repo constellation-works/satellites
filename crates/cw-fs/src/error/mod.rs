@@ -74,9 +74,9 @@ pub enum Error {
     /// The file or directory is open to other users: a group or other
     /// permission bit is set.
     #[error(
-        "refusing {}: mode {mode:o} is open to other users; fix with: chmod {fix} {}",
+        "refusing {}: mode {mode:o} is open to other users; {}",
         path.display(),
-        shell_quoted(path)
+        chmod_remedy(fix, path)
     )]
     Permissions {
         /// The directory or file.
@@ -139,10 +139,18 @@ impl Error {
     }
 }
 
-/// `path` as one shell word, so the remedy is safe to paste whatever the
-/// path holds: single-quoted, with each `'` written as `'\''`.
-fn shell_quoted(path: &Path) -> String {
-    format!("'{}'", path.display().to_string().replace('\'', r"'\''"))
+/// The `chmod` that makes `path` owner-only, safe to paste into a shell:
+/// `--` ends the options, so a name starting with `-` is not read as one,
+/// and the path is one single-quoted word, each `'` written as `'\''`. A
+/// path that is not valid UTF-8 cannot be printed exactly, so the remedy
+/// says so instead of printing a command that would name another file.
+fn chmod_remedy(fix: &str, path: &Path) -> String {
+    match path.to_str() {
+        Some(text) => format!("fix with: chmod {fix} -- '{}'", text.replace('\'', r"'\''")),
+        None => format!(
+            "set its mode to {fix}; its name is not valid UTF-8, so no command can be printed for it"
+        ),
+    }
 }
 
 /// `Result` with this crate's [`Error`].

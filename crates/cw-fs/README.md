@@ -18,9 +18,11 @@ no record and no file name.
 
 ## Guarantees
 
-- **Durable.** A crash leaves the old file or the new one, never a torn one. A filesystem
-  that cannot sync a directory (`EINVAL`, `ENOTSUP`) is tolerated; any other failure is an
-  error.
+- **Durable.** A crash leaves the old file or the new one, never a torn one. On Linux and
+  macOS the directory is synced too, so once a write returns a crash cannot bring the old
+  file back; a filesystem that cannot sync a directory (`EINVAL`, `ENOTSUP`) is tolerated,
+  and any other failure is an error. On native Windows the directory sync is a no-op, so
+  that last guarantee is the volume's.
 - **Owner-only.** Everything is created `0700` or `0600`. `inspect_file`, `inspect_dir`,
   `read`, `append` and `Lock::acquire` refuse state owned by another user, or with any group
   or other permission bit, and the error names the `chmod` that fixes it, with the path
@@ -35,7 +37,8 @@ An OS advisory lock (`std::fs::File::try_lock`: `flock` on Unix, `LockFileEx` on
 on a file that is never deleted, so the kernel releases it when its holder dies.
 
 - A deadline is required. Polling starts at 1 ms and doubles to 20 ms, and no attempt is
-  made after the deadline.
+  started after the deadline. The deadline bounds the waiting, not the instant the lock is
+  taken: an attempt that starts just before it may finish a few microseconds after.
 - The holder records one JSON line (pid, time, label; at most 4096 bytes, so a long label
   is cut) after acquiring and clears it on release. A waiter that times out gets `Error::Locked` naming the holder only while that
   process is alive; nothing decides ownership from the record.
@@ -60,11 +63,12 @@ compile-checked only, and has these limits:
 | Symbolic link at the path | Refused | Refused |
 | Owner, mode and hard-link checks | Run | Skipped |
 | Directory flush after a rename | Run (`EINVAL`/`ENOTSUP` tolerated) | No-op |
-| Holder named in a lock timeout | When the recorded process is alive | Never (another process's record cannot be read through the lock) |
+| Holder named in a lock timeout | When the recorded process is alive | Never, this process included (the record cannot be read through the holder's lock) |
 | Same thread re-acquiring a lock | Refused for any path spelling | Refused only for the same spelling |
 
 Whether a recorded holder is alive: Linux checks the pid and the process's start time, so an
-exited process, a zombie or a reused pid is not named. macOS checks only that the pid exists,
+exited process, a zombie, a reused pid, or a record with no start time (an older build's, or
+one written when `/proc` could not be read) is not named. macOS checks only that the pid exists,
 so a zombie or a reused pid may be named.
 
 ## Example
