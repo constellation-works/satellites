@@ -10,7 +10,7 @@ use cw_app::Runtime;
 use cw_mcp::{ServerInfo, serve_stdio};
 use serde_json::{Value, json};
 use std::io::{BufRead as _, BufReader, Write as _};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -27,17 +27,34 @@ fn stdio_server() {
     serve_stdio(info, runtime, fixture::tools()).expect("serve_stdio returns Ok");
 }
 
+/// The server child, killed and reaped when dropped, so a failing test
+/// leaves no process behind.
+struct Reaped(Child);
+
+impl Drop for Reaped {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 #[test]
 fn serve_stdio_returns_when_its_input_closes() {
-    let mut child = Command::new(std::env::current_exe().unwrap())
-        .args(["stdio_server", "--exact", "--ignored", "--test-threads=1"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .unwrap();
+    // The child runs in a root this test owns, with HOME there too.
+    let root = tempfile::tempdir().unwrap();
+    let mut child = Reaped(
+        Command::new(std::env::current_exe().unwrap())
+            .args(["stdio_server", "--exact", "--ignored", "--test-threads=1"])
+            .current_dir(root.path())
+            .env("HOME", root.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap(),
+    );
 
-    let mut stdin = child.stdin.take().unwrap();
+    let mut stdin = child.0.stdin.take().unwrap();
     let initialize = json!({
         "jsonrpc": "2.0", "id": 1, "method": "initialize",
         "params": {
@@ -51,7 +68,7 @@ fn serve_stdio_returns_when_its_input_closes() {
     // The test harness prints its own text on stdout too, and the server's
     // first line follows the harness's `test stdio_server ... ` on the same
     // line; the server's JSON starts at the first brace.
-    let stdout = child.stdout.take().unwrap();
+    let stdout = child.0.stdout.take().unwrap();
     let (lines, received) = mpsc::channel();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
@@ -67,11 +84,11 @@ fn serve_stdio_returns_when_its_input_closes() {
     drop(stdin);
     let started = Instant::now();
     let status = loop {
-        if let Some(status) = child.try_wait().unwrap() {
+        if let Some(status) = child.0.try_wait().unwrap() {
             break status;
         }
+        // The guard kills and reaps the child as the panic unwinds.
         if started.elapsed() > DEADLINE {
-            child.kill().unwrap();
             panic!("serve_stdio did not return within {DEADLINE:?} of its input closing");
         }
         std::thread::sleep(Duration::from_millis(20));
