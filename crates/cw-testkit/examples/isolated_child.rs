@@ -23,7 +23,8 @@ fn main() -> ExitCode {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let root = TempRoot::new("EXAMPLE")?;
 
-    // The child sees HOME, PATH, EXAMPLE_ROOT and what we add, nothing else.
+    // The child sees HOME, PATH, EXAMPLE_ROOT, GIT_CEILING_DIRECTORIES and
+    // what we add, nothing else.
     let out = root
         .command("sh")
         .args([

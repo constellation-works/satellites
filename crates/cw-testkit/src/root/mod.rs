@@ -28,6 +28,9 @@ use crate::child;
 pub struct TempRoot {
     dir: tempfile::TempDir,
     root_var: String,
+    /// The canonical parent of the temp root: git looks for a repository no
+    /// higher than the root itself.
+    git_ceiling: PathBuf,
 }
 
 impl TempRoot {
@@ -53,9 +56,21 @@ impl TempRoot {
                 path: std::env::temp_dir(),
                 source,
             })?;
+        // Canonical, because git compares its ceiling with the canonical
+        // working directory (the system temporary directory may sit behind
+        // a link, as /var does on macOS).
+        let canonical = std::fs::canonicalize(dir.path()).map_err(|source| Error::Io {
+            action: "resolve the temp root",
+            path: dir.path().to_path_buf(),
+            source,
+        })?;
+        let git_ceiling = canonical
+            .parent()
+            .map_or_else(|| canonical.clone(), Path::to_path_buf);
         let made = Self {
             dir,
             root_var: format!("{prefix}_ROOT"),
+            git_ceiling,
         };
         for sub in [made.home(), made.bin()] {
             create_private_dir(&sub)?;
@@ -88,6 +103,11 @@ impl TempRoot {
         self.path().join("root")
     }
 
+    /// The directory git may not climb into from the temp root.
+    pub(crate) fn git_ceiling(&self) -> &Path {
+        &self.git_ceiling
+    }
+
     /// The name of the root variable, `<APP>_ROOT`.
     #[must_use]
     pub fn root_var(&self) -> &str {
@@ -97,6 +117,10 @@ impl TempRoot {
     /// A path inside the temp root but outside the home, the `bin/` and the
     /// data root, for files a test needs somewhere neutral. Nothing is
     /// created.
+    ///
+    /// `name` must be a relative path without `..`: it is joined as given,
+    /// so an absolute path or enough `..` components lead outside the temp
+    /// root.
     #[must_use]
     pub fn elsewhere(&self, name: impl AsRef<Path>) -> PathBuf {
         self.path().join("elsewhere").join(name)
@@ -121,14 +145,21 @@ impl TempRoot {
     /// A command for `program` with an isolated environment, run in the temp
     /// root.
     ///
-    /// The working directory is [`path`](Self::path), so a child that looks
-    /// upward from its directory (a git discovering a repository, a tool
-    /// searching for its config file) starts inside the fixture, not in the
-    /// checkout the tests run from; the test may set another with
-    /// [`Command::current_dir`]. The environment is cleared, then `HOME` is set to [`home`](Self::home),
+    /// The working directory is [`path`](Self::path), so a child starts
+    /// inside the fixture, not in the checkout the tests run from; the test
+    /// may set another with [`Command::current_dir`]. That alone does not
+    /// stop a child looking upward: the temp root sits under the system
+    /// temporary directory, which may itself be inside a repository. So
+    /// `GIT_CEILING_DIRECTORIES` is set to the temp root's parent, and git
+    /// run in the temp root or below never discovers a repository above it.
+    /// Two limits: a tool that searches upward for its own files by other
+    /// means is not bounded, and on Unix git splits the variable at `:`, so
+    /// if the temp root's parent has a `:` in its path the ceiling is lost
+    /// and git may discover an enclosing repository. The environment is cleared, then `HOME` is set to [`home`](Self::home),
     /// `<APP>_ROOT` to [`app_root`](Self::app_root), and `PATH` to
     /// [`bin`](Self::bin) followed by the system's standard program
-    /// directories (`/usr/bin:/bin` on Unix). Nothing else is inherited: a
+    /// directories (`/usr/bin:/bin` on Unix), and `GIT_CEILING_DIRECTORIES`
+    /// as above. Nothing else is inherited: a
     /// variable the test needs is set on the returned command with
     /// [`Command::env`].
     ///
