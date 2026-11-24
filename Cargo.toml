@@ -16,7 +16,10 @@ repository = "https://github.com/constellation-works/satellites"
 cw-base = { path = "crates/cw-base", version = "0.1.0" }
 cw-fs = { path = "crates/cw-fs", version = "0.1.0" }
 cw-supervise = { path = "crates/cw-supervise", version = "0.1.0" }
+cw-sqlite = { path = "crates/cw-sqlite", version = "0.1.0" }
 
+# cw-sqlite builds its own SQLite and re-exports rusqlite, so a project names one version.
+rusqlite = { version = "0.43", default-features = false, features = ["bundled", "cache"] }
 rustix = { version = "1.1", default-features = false, features = ["std", "fs", "process"] }
 tempfile = "3.25"
 thiserror = "2.0.18"

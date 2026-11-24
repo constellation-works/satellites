@@ -17,6 +17,9 @@ allow = [
     # unicode-ident (through proc-macro2, under thiserror's derive) carries
     # the Unicode data licence alongside MIT OR Apache-2.0.
     "Unicode-3.0",
+    # foldhash (through hashlink, the statement cache of rusqlite under
+    # cw-sqlite) is under the zlib licence.
+    "Zlib",
 ]
 confidence-threshold = 0.9
 
