@@ -20,6 +20,7 @@ ALLOWED='
 cw-base:
 cw-fs: cw-base
 cw-testkit:
+cw-supervise:
 '
 
 # crate: the modules its sources must not name (space-separated). Found in a

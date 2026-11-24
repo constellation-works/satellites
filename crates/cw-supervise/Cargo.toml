@@ -1,0 +1,27 @@
+[package]
+name = "cw-supervise"
+version.workspace = true
+description = "Run a child process in its own process group with a required deadline, a polite-then-forced stop, a sweep on every exit path and capped output."
+readme = "README.md"
+keywords = ["subprocess", "process-group", "timeout", "supervisor", "cli"]
+categories = ["os::unix-apis"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# cw-supervise depends on no kit crate (scripts/check-dependency-direction.sh).
+[dependencies]
+thiserror.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+rustix.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
+rustix.workspace = true
+
+[lints]
+workspace = true
