@@ -41,9 +41,14 @@ pub enum Error {
     /// The server's private runtime could not be started.
     #[error("cannot start the MCP server's runtime")]
     Runtime(#[source] std::io::Error),
-    /// The connection failed before the client closed it: the handshake or
-    /// the transport broke.
-    #[error("the MCP connection failed")]
+    /// The session could not be served: the handshake failed (the first
+    /// message was not `initialize`, or the answer to it could not be
+    /// written), or the session's task ended abnormally.
+    ///
+    /// Not returned for a failure to read the input: the protocol SDK
+    /// reports a read error the same way as the input closing, so the
+    /// session ends with `Ok(())` either way.
+    #[error("the MCP session could not be served")]
     Connection(#[source] Box<dyn StdError + Send + Sync + 'static>),
 }
 

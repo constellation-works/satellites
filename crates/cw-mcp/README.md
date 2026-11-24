@@ -62,7 +62,9 @@ cw_mcp::serve_stdio(ServerInfo::new("notes", "0.1.0", "notes_internal"), runtime
   input schema, including arguments that are not an object) is a JSON-RPC error `-32602`
   with the request's id, and no tool runs.
 - **Closing standard input** ends the session: `serve_stdio` returns `Ok(())`, also when the
-  client leaves before the handshake.
+  client leaves before the handshake. The protocol SDK reports a failure to read the input
+  the same way, so it also ends with `Ok(())`; `Error::Connection` means the handshake
+  failed or the session ended abnormally.
 - **Shutdown is bounded.** After the input closes, answers in flight get up to 5 s to be
   written, and a tool function still running gets 2 s more; then it is abandoned on its
   thread, its answer is never sent, and `serve_stdio` returns. A function that changes data

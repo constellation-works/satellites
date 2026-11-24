@@ -30,8 +30,9 @@ use cw_app::Runtime;
 ///
 /// [`crate::Error::DuplicateTool`] or [`crate::Error::InputSchema`] when the
 /// tool list is refused; [`crate::Error::Runtime`] when the runtime cannot
-/// start; [`crate::Error::Connection`] when the handshake or the transport
-/// fails before the client closes its input.
+/// start; [`crate::Error::Connection`] when the handshake fails or the
+/// session ends abnormally. A failure to read standard input is not told
+/// apart from its closing: both end the session with `Ok(())`.
 pub fn serve_stdio<S: Send + Sync + 'static>(
     info: ServerInfo,
     runtime: Runtime<S>,
