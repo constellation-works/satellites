@@ -11,3 +11,10 @@ slow-timeout = { period = "60s", terminate-after = 2 }
 filter = "package(cw-fs) & binary(lock)"
 threads-required = "num-test-threads"
 slow-timeout = { period = "15s", terminate-after = 2 }
+
+# The cw-supervise run tests measure wall-clock time (a grace, a drain wait).
+# Each runs alone, with a tighter deadline of its own.
+[[profile.default.overrides]]
+filter = "package(cw-supervise) & (binary(group) | binary(output))"
+threads-required = "num-test-threads"
+slow-timeout = { period = "15s", terminate-after = 2 }

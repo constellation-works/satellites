@@ -15,6 +15,7 @@ repository = "https://github.com/constellation-works/satellites"
 # Kit crates, by path for the workspace and by version for publishing.
 cw-base = { path = "crates/cw-base", version = "0.1.0" }
 cw-fs = { path = "crates/cw-fs", version = "0.1.0" }
+cw-supervise = { path = "crates/cw-supervise", version = "0.1.0" }
 
 rustix = { version = "1.1", default-features = false, features = ["std", "fs", "process"] }
 tempfile = "3.25"
