@@ -1,0 +1,70 @@
+# cw-testkit
+
+Test isolation for command-line tools: a test that runs a program must not read or write the
+machine it runs on. `cw-testkit` is a dev-dependency that gives each test:
+
+- **`TempRoot`** — a private (`0700`) temporary directory, removed on drop, holding a `home/`,
+  a `bin/` for fake programs and the application's data root (`root/`, left for the program to
+  create). It is parameterised by the application's environment prefix: `TempRoot::new("MYAPP")`
+  points `MYAPP_ROOT` at it.
+- **`TempRoot::command`** — a `std::process::Command` whose environment is cleared, then given
+  only `HOME`, `PATH` (the temp root's `bin/`, then `/usr/bin:/bin`) and `<APP>_ROOT`. The test
+  adds whatever else it names; nothing else is inherited, so a developer's exported variables,
+  colour settings or real data root never reach the program under test.
+- **`Goldens`** — compares output with a file under the test's `goldens/` folder. With
+  `UPDATE_GOLDENS=1` it rewrites the file instead. A mismatch is an error naming the file and
+  the variable, so a test can collect every stale golden before failing.
+  `redact_timestamps` replaces RFC 3339 timestamps with `<timestamp>` first, so the clock
+  never makes a golden stale.
+
+The crate is synchronous and has no unsafe code.
+
+## Usage
+
+```toml
+[dev-dependencies]
+cw-testkit = "0.1"
+```
+
+```rust,no_run
+use cw_testkit::{Goldens, TempRoot, redact_timestamps};
+
+#[test]
+fn list_matches_its_golden() {
+    let root = TempRoot::new("MYAPP").expect("temp root");
+    let out = root
+        .command(env!("CARGO_BIN_EXE_myapp"))
+        .args(["list"])
+        .env("MYAPP_LOG", "off")
+        .output()
+        .expect("run myapp");
+    let text = String::from_utf8(out.stdout).expect("utf-8");
+
+    let goldens = Goldens::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/goldens"));
+    goldens.assert("list.txt", &redact_timestamps(&text));
+}
+```
+
+After an intended output change, regenerate and review the diff as a contract change:
+
+```sh
+UPDATE_GOLDENS=1 cargo test
+```
+
+`examples/isolated_child.rs` runs a child in an isolated environment and checks its output
+against a golden: `cargo run -p cw-testkit --example isolated_child`.
+
+## The hostile-environment script
+
+`scripts/hostile-env-test.sh` in this repository runs a whole suite under a read-only decoy
+`HOME` and `XDG_*` tree (with a git config whose hooks leave a marker) and a `TMPDIR` whose
+path has a space and a non-ASCII letter. It then checks that the suite passed, no hook ran, the
+home is unchanged and `TMPDIR` is empty. Copy it into a project and pass the suite's command:
+
+```sh
+scripts/hostile-env-test.sh cargo test --workspace --locked
+```
+
+## License
+
+MIT.

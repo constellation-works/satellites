@@ -1,4 +1,4 @@
-.PHONY: help build test fmt fmt-check clippy doc deny standards-check dependency-direction ci-fast ci-lint ci clean
+.PHONY: help build test hostile-env-test fmt fmt-check clippy doc deny standards-check dependency-direction ci-fast ci-lint ci clean
 
 CARGO ?= cargo
 # Every build uses the committed Cargo.lock as is; a stale lock fails instead
@@ -32,6 +32,7 @@ help:
 	@echo "  make ci-fast          Pre-handoff gate, no compile: fmt, standards-check, dependency-direction"
 	@echo "  make ci-lint          clippy -D warnings, rustdoc -D warnings, cargo-deny (skipped locally if not installed)"
 	@echo "  make test             All tests (nextest when installed, else cargo test) + doctests"
+	@echo "  make hostile-env-test The tests under a hostile HOME, TMPDIR and XDG_*"
 	@echo "  make standards-check  Run the vendored standards check (docs/standards/check.sh)"
 	@echo "  make dependency-direction  Check which kit crates each crate may depend on"
 	@echo "  make ci               Everything above; what CI runs"
@@ -74,6 +75,12 @@ test:
 	fi
 	$(CARGO) test --workspace --doc $(LOCKED)
 
+# The tests again under a read-only decoy HOME and XDG_* and an awkward
+# TMPDIR, checking the host side afterwards (STD-03 R20). cargo test, not
+# nextest, so the gate runs where nextest is not installed.
+hostile-env-test:
+	./scripts/hostile-env-test.sh $(CARGO) test --workspace --all-targets $(LOCKED)
+
 # The constellation standards this repo adopted are vendored under
 # docs/standards/ by operations/scripts/sync-standards.sh, which also writes
 # check.sh.
@@ -98,7 +105,7 @@ ci-fast: fmt-check standards-check dependency-direction
 ci-lint: clippy doc deny
 
 # Full pass. Keep aligned with .github/workflows/ci.yml.
-ci: ci-fast ci-lint test
+ci: ci-fast ci-lint test hostile-env-test
 
 clean:
 	$(CARGO) clean

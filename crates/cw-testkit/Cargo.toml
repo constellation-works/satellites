@@ -1,0 +1,18 @@
+[package]
+name = "cw-testkit"
+version = "0.1.0"
+description = "Test isolation for command-line tools: private temp roots, a child command with a cleared environment, and a golden-file harness."
+readme = "README.md"
+keywords = ["testing", "golden", "fixture", "isolation", "cli"]
+categories = ["development-tools::testing"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tempfile.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
