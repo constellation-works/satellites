@@ -7,9 +7,9 @@
 //! - [`TempRoot`]: a private (`0700`) temporary directory, removed on drop,
 //!   holding a home, a data root and a `bin/` directory for the test.
 //! - [`TempRoot::command`]: a child [`Command`](std::process::Command) built
-//!   from a cleared environment. Only `HOME`, `PATH` and `<APP>_ROOT` are
-//!   set, to the temp root's values; a test adds whatever else it names.
-//!   Nothing else is inherited.
+//!   from a cleared environment, run in the temp root. Only `HOME`, `PATH`,
+//!   `<APP>_ROOT` and `GIT_CEILING_DIRECTORIES` are set, to the temp root's
+//!   values; a test adds whatever else it names. Nothing else is inherited.
 //! - [`Goldens`]: compares output with a file under the test's `goldens/`
 //!   folder. [`UPDATE_VAR`] (`UPDATE_GOLDENS=1`) rewrites the files instead,
 //!   and [`redact_timestamps`] replaces timestamps with a placeholder so the
@@ -25,7 +25,8 @@
 //! let root = TempRoot::new("MYAPP")?;
 //! let mut cmd = root.command("env");
 //! cmd.env("MYAPP_LOG", "debug");
-//! // `cmd` sees HOME, PATH, MYAPP_ROOT and MYAPP_LOG, and nothing else.
+//! // `cmd` sees HOME, PATH, MYAPP_ROOT, GIT_CEILING_DIRECTORIES and
+//! // MYAPP_LOG, and nothing else.
 //! assert_eq!(root.root_var(), "MYAPP_ROOT");
 //! # Ok(())
 //! # }

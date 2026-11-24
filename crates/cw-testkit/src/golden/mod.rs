@@ -68,17 +68,20 @@ impl Goldens {
     /// # Errors
     ///
     /// [`Error::InvalidGoldenName`] if `name` is empty, absolute or contains
-    /// `..`; [`Error::GoldenSymlink`] if the golden file or a directory
-    /// between it and [`dir`](Self::dir) is a symbolic link, when comparing
-    /// and when updating; [`Error::GoldenMissing`] or [`Error::GoldenMismatch`] when
+    /// `..`; [`Error::GoldenSymlink`] if [`dir`](Self::dir) itself, the
+    /// golden file or a directory between them is a symbolic link, when
+    /// comparing and when updating; [`Error::GoldenMissing`] or [`Error::GoldenMismatch`] when
     /// comparing; [`Error::Io`] if the file cannot be read or written.
     pub fn check(&self, name: impl AsRef<Path>, actual: &str) -> Result<(), Error> {
-        let path = self.path_of(name.as_ref())?;
-        self.refuse_links(name.as_ref())?;
+        // `shown` is the path as configured, for messages; `resolved` is the
+        // one path every inspection and access goes through.
+        let shown = self.path_of(name.as_ref())?;
+        let resolved = self.resolve(name.as_ref())?;
         if self.update {
-            return write(&path, actual);
+            return write(&resolved, actual);
         }
-        let expected = match std::fs::read_to_string(&path) {
+        let path = shown;
+        let expected = match std::fs::read_to_string(&resolved) {
             Ok(expected) => expected,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 return Err(Error::GoldenMissing {
@@ -118,30 +121,41 @@ impl Goldens {
         }
     }
 
-    /// Refuse a symbolic link at any existing step from [`dir`](Self::dir)
-    /// down to the golden file. `name` is already checked to hold only
-    /// normal components. A step that does not exist ends the walk: nothing
-    /// below it exists either.
-    fn refuse_links(&self, name: &Path) -> Result<(), Error> {
-        let mut path = self.dir.clone();
+    /// The golden file's path, resolved once: [`dir`](Self::dir) made
+    /// canonical (links above it are the caller's and are followed), then
+    /// `name` below it, refusing a symbolic link at the folder itself and at
+    /// every existing step down to the file. `name` is already checked to
+    /// hold only normal components. Once a step does not exist, nothing
+    /// below it does either, so the rest is joined unchecked.
+    fn resolve(&self, name: &Path) -> Result<PathBuf, Error> {
+        let mut path = match lstat(&self.dir)? {
+            Some(meta) if meta.file_type().is_symlink() => {
+                return Err(Error::GoldenSymlink {
+                    path: self.dir.clone(),
+                });
+            }
+            Some(_) => std::fs::canonicalize(&self.dir).map_err(|source| Error::Io {
+                action: "resolve the goldens folder",
+                path: self.dir.clone(),
+                source,
+            })?,
+            None => return Ok(self.dir.join(name)),
+        };
+        let mut exists = true;
         for part in name.components() {
             path.push(part);
-            match std::fs::symlink_metadata(&path) {
-                Ok(meta) if meta.file_type().is_symlink() => {
+            if !exists {
+                continue;
+            }
+            match lstat(&path)? {
+                Some(meta) if meta.file_type().is_symlink() => {
                     return Err(Error::GoldenSymlink { path });
                 }
-                Ok(_) => {}
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-                Err(source) => {
-                    return Err(Error::Io {
-                        action: "inspect the golden path",
-                        path,
-                        source,
-                    });
-                }
+                Some(_) => {}
+                None => exists = false,
             }
         }
-        Ok(())
+        Ok(path)
     }
 
     fn path_of(&self, name: &Path) -> Result<PathBuf, Error> {
@@ -156,6 +170,20 @@ impl Goldens {
                 name: name.to_path_buf(),
             })
         }
+    }
+}
+
+/// `path`'s own metadata, not following a link, or `None` if it does not
+/// exist.
+fn lstat(path: &Path) -> Result<Option<std::fs::Metadata>, Error> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) => Ok(Some(meta)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(Error::Io {
+            action: "inspect the golden path",
+            path: path.to_path_buf(),
+            source,
+        }),
     }
 }
 

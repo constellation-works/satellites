@@ -9,8 +9,9 @@
 # The command runs once with:
 #
 #   HOME             a read-only home full of decoys: a shell profile, a git
-#                    config whose hooks write a marker whenever any git reads
-#                    it, and a config, data, state and cache tree;
+#                    config whose hooksPath points at decoy hooks that write a
+#                    marker whenever a git that read that config runs one,
+#                    and a config, data, state and cache tree;
 #   XDG_*_HOME, XDG_RUNTIME_DIR, XDG_CONFIG_DIRS, XDG_DATA_DIRS
 #                    decoy trees inside that home, read-only too, so neither
 #                    the per-user directories nor the system search paths
@@ -23,9 +24,13 @@
 # home tree is byte for byte as it was, and TMPDIR holds nothing (every temp
 # root was removed). Exits 0 only if all of that held.
 #
-# A plain read is not observed: a test that reads the decoy home still
-# passes here. What the run shows is that such a read sees decoys, not the
+# A plain read is not observed: a test that reads the decoy home, or a git
+# that reads the decoy config without running a hook, still passes here. What the run shows is that such a read sees decoys, not the
 # developer's files, and that a write there fails.
+#
+# GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM are not redirected: if the caller
+# exports one, it still points git at the caller's configuration. Run the
+# script from an environment without them for the git decoys to apply.
 #
 # CARGO_HOME and RUSTUP_HOME are pinned to their current values before HOME
 # moves, so cargo and rustup still find the toolchain and the registry.
@@ -122,4 +127,4 @@ $leftover"
 if [[ "$failed" -ne 0 ]]; then
     exit 1
 fi
-echo "hostile-env: the suite passed; no git hook ran, the home is unchanged and TMPDIR is empty"
+echo "hostile-env: the suite passed; no decoy git hook ran, the home is unchanged and TMPDIR is empty"

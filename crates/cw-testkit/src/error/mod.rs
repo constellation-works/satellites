@@ -32,7 +32,7 @@ pub enum Error {
         name: PathBuf,
     },
 
-    /// The golden file, or a directory between it and the goldens folder, is
+    /// The goldens folder itself, the golden file, or a directory between them is
     /// a symbolic link. Goldens are never read or written through a link,
     /// so an update cannot write outside the goldens folder.
     #[error(

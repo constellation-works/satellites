@@ -10,6 +10,27 @@ use cw_testkit::{Error, Goldens, TempRoot, UPDATE_VAR, redact_timestamps};
 /// Where [`update_helper`] writes, passed by [`update_variable_rewrites_the_file`].
 const HELPER_DIR: &str = "CWTEST_GOLDEN_DIR";
 const HELPER: &str = "update_helper";
+/// Set to `refused` when [`update_helper`] must see its update refused.
+const HELPER_EXPECT: &str = "CWTEST_GOLDEN_EXPECT";
+
+/// Run [`update_helper`] in a child with the update variable set, updating
+/// the goldens in `dir`, and require the child to pass.
+fn run_update_helper(root: &TempRoot, dir: &std::path::Path, expect: &str) {
+    let out = root
+        .command(std::env::current_exe().unwrap())
+        .args(["--exact", HELPER, "--ignored", "--test-threads", "1"])
+        .env(UPDATE_VAR, "1")
+        .env(HELPER_DIR, dir)
+        .env(HELPER_EXPECT, expect)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "helper failed: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
 
 /// The goldens folder of a comparison test, inside its temp root.
 fn goldens_in(root: &TempRoot) -> Goldens {
@@ -80,37 +101,45 @@ fn update_variable_rewrites_the_file() {
 
     // The variable is read from the process environment, so the check runs
     // in a child: this test binary, running only the ignored helper below.
-    let exe = std::env::current_exe().unwrap();
-    let out = root
-        .command(&exe)
-        .args(["--exact", HELPER, "--ignored", "--test-threads", "1"])
-        .env(UPDATE_VAR, "1")
-        .env(HELPER_DIR, &dir)
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "helper failed: {}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
+    run_update_helper(&root, &dir, "written");
     assert_eq!(
         std::fs::read_to_string(dir.join("out/list.txt")).unwrap(),
         "fresh\n"
     );
 }
 
-/// Run by [`update_variable_rewrites_the_file`] in a child; does nothing on
-/// its own.
+#[cfg(unix)]
 #[test]
-#[ignore = "run as a child by update_variable_rewrites_the_file"]
+fn an_update_through_a_linked_goldens_folder_leaves_its_target_unchanged() {
+    let root = TempRoot::new("CWTEST").unwrap();
+    let sibling = root.elsewhere("sibling");
+    std::fs::create_dir_all(sibling.join("out")).unwrap();
+    std::fs::write(sibling.join("out/list.txt"), "sibling fixture\n").unwrap();
+    let linked = root.elsewhere("goldens");
+    std::os::unix::fs::symlink(&sibling, &linked).unwrap();
+
+    run_update_helper(&root, &linked, "refused");
+    assert_eq!(
+        std::fs::read_to_string(sibling.join("out/list.txt")).unwrap(),
+        "sibling fixture\n"
+    );
+}
+
+/// Run by [`run_update_helper`] in a child; does nothing on its own.
+#[test]
+#[ignore = "run as a child by run_update_helper"]
 fn update_helper() {
     let Some(dir) = std::env::var_os(HELPER_DIR) else {
         return;
     };
     let goldens = Goldens::new(dir);
     assert!(goldens.is_updating());
-    goldens.assert("out/list.txt", "fresh\n");
+    if std::env::var_os(HELPER_EXPECT).is_some_and(|v| v == "refused") {
+        let err = goldens.check("out/list.txt", "fresh\n").unwrap_err();
+        assert!(matches!(err, Error::GoldenSymlink { .. }), "{err:?}");
+    } else {
+        goldens.assert("out/list.txt", "fresh\n");
+    }
 }
 
 #[test]

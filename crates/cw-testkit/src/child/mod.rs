@@ -12,15 +12,17 @@ const SYSTEM_PATH: &[&str] = &["/usr/bin", "/bin"];
 #[cfg(not(unix))]
 const SYSTEM_PATH: &[&str] = &[];
 
-/// `program` with the environment cleared, only `HOME`, `PATH` and the root
-/// variable set to `root`'s values, and the working directory at the root.
+/// `program` with the environment cleared, only `HOME`, `PATH`, the root
+/// variable and `GIT_CEILING_DIRECTORIES` set to `root`'s values, and the
+/// working directory at the root.
 pub(crate) fn isolated(program: &OsStr, root: &TempRoot) -> Command {
     let mut cmd = Command::new(program);
     cmd.current_dir(root.path())
         .env_clear()
         .env("HOME", root.home())
         .env("PATH", path_value(root))
-        .env(root.root_var(), root.app_root());
+        .env(root.root_var(), root.app_root())
+        .env("GIT_CEILING_DIRECTORIES", root.git_ceiling());
     cmd
 }
 
