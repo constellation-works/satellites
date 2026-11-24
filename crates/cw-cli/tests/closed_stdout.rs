@@ -1,7 +1,7 @@
 //! A closed stdout ends the writes, not the command, and the exit is 0.
 
 use cw_app::Env;
-use cw_cli::{Exit, Format, Probe, Sink, Table, Terminal};
+use cw_cli::{Error, Exit, Format, Probe, Sink, Table, Terminal};
 use std::io::{self, Write};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -43,5 +43,57 @@ fn a_closed_stdout_latches_shut_and_the_command_exits_zero() -> TestResult {
     assert_eq!(exit.code(), 0);
     assert_eq!(out.attempts, 1, "nothing is written after the latch");
     assert!(err.is_empty(), "nothing on stderr");
+    Ok(())
+}
+
+/// A writer that takes nothing, or whose first flush is interrupted.
+#[derive(Default)]
+struct Stubborn {
+    takes_nothing: bool,
+    interrupted: bool,
+    flushed: bool,
+}
+
+impl Write for Stubborn {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        Ok(if self.takes_nothing { 0 } else { buf.len() })
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if self.interrupted {
+            self.interrupted = false;
+            return Err(io::ErrorKind::Interrupted.into());
+        }
+        self.flushed = true;
+        Ok(())
+    }
+}
+
+#[test]
+fn a_write_that_takes_nothing_fails_finish_and_an_interrupted_flush_is_retried() -> TestResult {
+    let terminal = Terminal::decide(&Env::default(), "notes", Probe::piped(), Some(Format::Json));
+
+    let takes_nothing = Stubborn {
+        takes_nothing: true,
+        ..Stubborn::default()
+    };
+    let mut sink = Sink::new(terminal, takes_nothing, Vec::new());
+    sink.emit(&["payload"], |_| Table::default())?;
+    match sink.finish() {
+        Err(Error::Output(error)) => assert_eq!(error.kind(), io::ErrorKind::WriteZero),
+        other => panic!("a lost payload must fail finish: {other:?}"),
+    }
+
+    let interrupted = Stubborn {
+        interrupted: true,
+        ..Stubborn::default()
+    };
+    let mut sink = Sink::new(terminal, interrupted, Vec::new());
+    sink.emit(&["payload"], |_| Table::default())?;
+    sink.finish()?;
+    assert!(
+        sink.into_parts().0.flushed,
+        "the interrupted flush is retried"
+    );
     Ok(())
 }

@@ -145,7 +145,14 @@ impl<O: Write, E: Write> Sink<O, E> {
     /// [`Error::Output`] when a write to stdout failed for any other reason;
     /// the program wraps it with its own code and reports it.
     pub fn finish(&mut self) -> Result<()> {
-        let _ = self.out.flush();
+        // The latch hands back only `Interrupted`: retry it until the flush
+        // lands or latches.
+        while let Err(error) = self.out.flush() {
+            if error.kind() != io::ErrorKind::Interrupted {
+                self.out.fail(error);
+                break;
+            }
+        }
         match self.out.take_failure() {
             Some(error) => Err(Error::Output(error)),
             None => Ok(()),
@@ -160,8 +167,11 @@ impl<O: Write, E: Write> Sink<O, E> {
 
     fn write_out(&mut self, text: &str) {
         // The latch returns no error but `Interrupted`, which `write_all`
-        // retries; a failure is kept for `finish`.
-        let _ = self.out.write_all(text.as_bytes());
+        // retries, and keeps any failure for `finish`. Anything else that
+        // reaches here is kept the same way.
+        if let Err(error) = self.out.write_all(text.as_bytes()) {
+            self.out.fail(error);
+        }
     }
 }
 

@@ -52,9 +52,17 @@ impl<W: Write> Latch<W> {
                 Ok(None)
             }
             Err(error) => {
-                self.state = State::Failed(error);
+                self.fail(error);
                 Ok(None)
             }
+        }
+    }
+
+    /// Latch the stream on `error`, a failure other than a closed reader,
+    /// unless it has already stopped: the first failure is the one kept.
+    pub(crate) fn fail(&mut self, error: io::Error) {
+        if matches!(self.state, State::Open) {
+            self.state = State::Failed(error);
         }
     }
 
@@ -83,7 +91,13 @@ impl<W: Write> Latch<W> {
 
 impl<W: Write> Write for Latch<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        Ok(self.pass(|w| w.write(buf))?.unwrap_or(buf.len()))
+        let written = self.pass(|w| w.write(buf))?;
+        if written == Some(0) && !buf.is_empty() {
+            // A writer that takes nothing will never take the rest: the
+            // payload is lost, which `finish` must report.
+            self.fail(ErrorKind::WriteZero.into());
+        }
+        Ok(written.filter(|&n| n > 0).unwrap_or(buf.len()))
     }
 
     fn flush(&mut self) -> io::Result<()> {
