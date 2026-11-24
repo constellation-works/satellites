@@ -11,15 +11,20 @@ use tempfile::NamedTempFile;
 ///
 /// The bytes go to a temporary file in the same directory, which is flushed
 /// and renamed over `path`; then the directory is flushed. A reader sees the
-/// whole old content or the whole new content, never a mix, and a crash
-/// after this returns cannot bring the old content back. A symbolic link at
+/// whole old content or the whole new content, never a mix. Once this
+/// returns, a crash cannot bring the old content back only where the
+/// directory flush ran and succeeded: on Linux and macOS, unless the
+/// filesystem answered it with `EINVAL` or `ENOTSUP`, when it is skipped.
+/// On native Windows the flush is a no-op; there it is as the volume keeps
+/// the rename. A symbolic link at
 /// `path` is replaced by the file; its target is never written. The
 /// temporary file is removed on every failure.
 ///
 /// # Errors
 ///
 /// [`Error::Io`] when any step fails, the directory flush included (a
-/// filesystem that cannot flush directories at all is tolerated).
+/// filesystem that cannot flush directories at all is tolerated). On native
+/// Windows the directory flush is a no-op.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let staged = stage(path, bytes)?;
     staged

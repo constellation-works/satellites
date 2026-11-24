@@ -17,13 +17,15 @@ pub(crate) fn sync_parent(path: &Path) -> Result<()> {
     sync_dir(dir).map_err(|e| Error::io("sync directory", dir, e))
 }
 
-/// A filesystem that cannot flush a directory at all answers `EINVAL` or
-/// `ENOTSUP` and has no stronger guarantee to give; the rename already
-/// happened, so that is not a failed write. Any other failure is.
+/// A filesystem that cannot flush a directory at all answers the flush with
+/// `EINVAL` or `ENOTSUP` and has no stronger guarantee to give; the rename
+/// already happened, so that is not a failed write. Any other failure is,
+/// and so is any failure to open the directory.
 #[cfg(unix)]
 fn sync_dir(dir: &Path) -> std::io::Result<()> {
     use rustix::io::Errno;
-    match std::fs::File::open(dir).and_then(|handle| handle.sync_all()) {
+    let handle = std::fs::File::open(dir)?;
+    match handle.sync_all() {
         Ok(()) => Ok(()),
         Err(e) if matches!(Errno::from_io_error(&e), Some(Errno::INVAL | Errno::NOTSUP)) => Ok(()),
         Err(e) => Err(e),

@@ -7,30 +7,110 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 const SIZE: usize = 64 * 1024;
 
+/// How many replacements must land while the reader is reading.
+const OVERLAP: usize = 20;
+
+/// The most reads the reader makes waiting for them.
+const MAX_READS: usize = 1_000_000;
+
+/// The most replacements the writer makes before it stops on its own.
+const MAX_WRITES: usize = 100_000;
+
+/// The replacing thread. Dropping it, on any path out of the test (an
+/// error or a panic included), tells it to stop and waits for it.
+struct Writer {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<Result<(), Error>>>,
+}
+
+impl Writer {
+    fn is_running(&self) -> bool {
+        self.thread.as_ref().is_some_and(|t| !t.is_finished())
+    }
+
+    /// Stop the writer and return how its writes went.
+    fn finish(mut self) -> TestResult {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        let thread = self
+            .thread
+            .take()
+            .ok_or("the writer was already finished")?;
+        thread.join().map_err(|_| "the writer panicked")??;
+        Ok(())
+    }
+}
+
+impl Drop for Writer {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
 #[test]
 fn a_reader_during_write_atomic_sees_the_whole_old_or_the_whole_new_content() -> TestResult {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("data");
-    write_atomic(&path, &[b'a'; SIZE])?;
-    let writer_path = path.clone();
-    let writer = std::thread::spawn(move || -> Result<(), Error> {
-        for round in 0..200 {
-            let byte = if round % 2 == 0 { b'b' } else { b'a' };
-            write_atomic(&writer_path, &[byte; SIZE])?;
+    let old = b"old.".repeat(SIZE / 4);
+    let new = b"new!".repeat(SIZE / 4);
+    write_atomic(&path, &old)?;
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let writes = Arc::new(AtomicUsize::new(0));
+    let (started, writing) = std::sync::mpsc::channel();
+    let writer = Writer {
+        stop: Arc::clone(&stop),
+        thread: Some({
+            let (path, old, new) = (path.clone(), old.clone(), new.clone());
+            let writes = Arc::clone(&writes);
+            std::thread::spawn(move || -> Result<(), Error> {
+                let _ = started.send(());
+                for round in 0..MAX_WRITES {
+                    if stop.load(Ordering::Acquire) {
+                        break;
+                    }
+                    write_atomic(&path, if round % 2 == 0 { &new } else { &old })?;
+                    writes.fetch_add(1, Ordering::Release);
+                }
+                Ok(())
+            })
+        }),
+    };
+    writing.recv_timeout(std::time::Duration::from_secs(10))?;
+
+    // Read until replacements have landed during the reading and at least
+    // one read had a replacement land while it ran, within a bound.
+    let before = writes.load(Ordering::Acquire);
+    let (mut reads, mut overlapped) = (0, 0);
+    loop {
+        let landed = writes.load(Ordering::Acquire);
+        if (landed - before >= OVERLAP && overlapped > 0) || reads >= MAX_READS {
+            break;
         }
-        Ok(())
-    });
-    let mut reads = 0;
-    while !writer.is_finished() || reads == 0 {
-        let bytes = read(&path, Cap::bytes(1 << 20))?;
-        assert_eq!(bytes.len(), SIZE, "a torn file was read");
-        assert!(
-            bytes.iter().all(|b| *b == bytes[0]),
-            "a mix of old and new content was read"
-        );
         reads += 1;
+        let bytes = read(&path, Cap::bytes(1 << 20))?;
+        assert!(
+            bytes == old || bytes == new,
+            "a read saw neither the old nor the new content ({} bytes)",
+            bytes.len()
+        );
+        if writes.load(Ordering::Acquire) > landed {
+            overlapped += 1;
+        }
     }
-    writer.join().map_err(|_| "the writer panicked")??;
+    let during = writes.load(Ordering::Acquire) - before;
+    let still_writing = writer.is_running();
+    writer.finish()?;
+    assert!(
+        during >= OVERLAP && overlapped > 0 && still_writing,
+        "the reads did not overlap the writes: {during} replacements during {reads} reads, \
+         {overlapped} of them while a replacement landed"
+    );
     Ok(())
 }
 
@@ -92,6 +172,49 @@ mod unix {
         assert_eq!(
             std::fs::metadata(&log)?.permissions().mode() & 0o7777,
             0o600
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn read_and_lock_refuse_a_file_open_to_others() -> TestResult {
+        use cw_fs::{Lock, write_atomic};
+        use std::fs::{Permissions, set_permissions};
+        let dir = tempfile::tempdir()?;
+        let data = dir.path().join("data");
+        write_atomic(&data, b"{}")?;
+        set_permissions(&data, Permissions::from_mode(0o644))?;
+        let err = read(&data, Cap::bytes(64))
+            .err()
+            .ok_or("a 0644 file was read")?;
+        assert!(
+            matches!(
+                err,
+                Error::Permissions {
+                    mode: 0o644,
+                    fix: "600",
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
+
+        let lock = dir.path().join(".lock");
+        drop(Lock::acquire(&lock, "t", Duration::ZERO)?);
+        set_permissions(&lock, Permissions::from_mode(0o666))?;
+        let err = Lock::acquire(&lock, "t", Duration::ZERO)
+            .err()
+            .ok_or("a 0666 lock file was taken")?;
+        assert!(
+            matches!(
+                err,
+                Error::Permissions {
+                    mode: 0o666,
+                    fix: "600",
+                    ..
+                }
+            ),
+            "got {err:?}"
         );
         Ok(())
     }

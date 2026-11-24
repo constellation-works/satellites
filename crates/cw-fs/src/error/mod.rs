@@ -12,7 +12,7 @@ pub use entry::EntryKind;
 use crate::lock::Holder;
 use cw_base::Kind;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// Why a file operation failed or was refused.
@@ -74,9 +74,9 @@ pub enum Error {
     /// The file or directory is open to other users: a group or other
     /// permission bit is set.
     #[error(
-        "refusing {}: mode {mode:o} is open to other users; fix with: chmod {fix} {}",
+        "refusing {}: mode {mode:o} is open to other users; {}",
         path.display(),
-        path.display()
+        chmod_remedy(fix, path)
     )]
     Permissions {
         /// The directory or file.
@@ -136,6 +136,22 @@ impl Error {
             path: path.into(),
             source,
         }
+    }
+}
+
+/// The `chmod` that makes `path` owner-only, safe to paste into a shell:
+/// `--` comes first and ends the options, so a name starting with `-` is
+/// not read as one by GNU or BSD `chmod` (BSD stops at the first operand,
+/// so a `--` after the mode would itself be taken as a file name),
+/// and the path is one single-quoted word, each `'` written as `'\''`. A
+/// path that is not valid UTF-8 cannot be printed exactly, so the remedy
+/// says so instead of printing a command that would name another file.
+fn chmod_remedy(fix: &str, path: &Path) -> String {
+    match path.to_str() {
+        Some(text) => format!("fix with: chmod -- {fix} '{}'", text.replace('\'', r"'\''")),
+        None => format!(
+            "set its mode to {fix}; its name is not valid UTF-8, so no command can be printed for it"
+        ),
     }
 }
 
