@@ -74,4 +74,10 @@ fn a_filter_with_no_directive_falls_back_to_warn() {
     assert!(out.contains("a warn line"), "{out}");
     assert!(!out.contains("an info line"), "{out}");
     assert_eq!(warning, None);
+
+    // A segment holding whitespace is not empty: it is reported as invalid.
+    let (out, warning) = logged(&[("NOTES_LOG", ", ,")]);
+    assert!(out.contains("a warn line"), "{out}");
+    assert!(!out.contains("an info line"), "{out}");
+    assert!(warning.is_some_and(|w| w.contains("NOTES_LOG")));
 }
