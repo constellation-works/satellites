@@ -5,6 +5,7 @@
 #[cfg(feature = "test-support")]
 mod duplex;
 mod handler;
+mod intake;
 mod serve;
 
 #[cfg(feature = "test-support")]

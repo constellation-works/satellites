@@ -102,6 +102,13 @@ fn arguments_that_do_not_match_the_schema_are_a_protocol_error_and_run_nothing()
         assert_eq!(reply["id"], id, "{reply}");
         assert_eq!(reply["error"]["code"], -32602, "{reply}");
     }
+    // Explicit null arguments are refused too, even by a tool that takes no
+    // input and would run on an empty object.
+    let reply = harness
+        .request(&fixture::call(5, "list", json!(null)))
+        .unwrap();
+    assert_eq!(reply["id"], 5, "{reply}");
+    assert_eq!(reply["error"]["code"], -32602, "{reply}");
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     harness.close().unwrap().unwrap();
 }
