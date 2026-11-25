@@ -6,8 +6,17 @@ machine it runs on. `cw-testkit` is a dev-dependency that gives each test:
 - **`TempRoot`** — a private (`0700`) temporary directory holding a `home/`, a `bin/` for fake
   programs and the application's data root (`root/`, left for the program to create). It is
   parameterised by the application's environment prefix: `TempRoot::new("MYAPP")` points
-  `MYAPP_ROOT` at it. Drop removes it best-effort and ignores a failure; `close()` removes it
-  and returns the error.
+  `MYAPP_ROOT` at it. The root, `home/` and `bin/` are set to `0700` explicitly after they are
+  made, so a restrictive umask (`0277` or `0477`, say) cannot leave them narrower. On Unix the
+  system temporary directory (resolved once, against the current directory if relative) must
+  be private, or sticky (like `/tmp`) and owned by root or the current user: any other one
+  writable by group or other is refused with an error naming it, since another user could
+  replace the root there before its mode is set. Beyond that check the directory itself is
+  trusted, as in `cw-fs` and `cw-sqlite`: its ancestors and any link in its path are used as
+  given, and a process that can swap them can swap the root too. A root whose `bin/` path contains the `PATH`
+  separator (`:` on Unix, which a `TMPDIR` can carry; `;` on Windows, from `TMP` or `TEMP`) is
+  refused with an error naming the path, because it would split the child's `PATH`. Drop removes it
+  best-effort and ignores a failure; `close()` removes it and returns the error.
 - **`TempRoot::command`** — a `std::process::Command` run in the temp root, whose environment
   is cleared, then given only `HOME`, `PATH` (the temp root's `bin/`, then `/usr/bin:/bin`),
   `<APP>_ROOT` and `GIT_CEILING_DIRECTORIES` (the temp root's parent, so git never discovers a
