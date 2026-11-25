@@ -61,6 +61,9 @@ cw_mcp::serve_stdio(ServerInfo::new("notes", "0.1.0", "notes_internal"), runtime
 - **A request the server cannot route** (an unknown tool, or arguments that do not match the
   input schema, including arguments that are not an object) is a JSON-RPC error `-32602`
   with the request's id, and no tool runs.
+- **Arguments left out, or an explicit `"arguments": null`,** are read as an empty object,
+  because the protocol SDK decodes the two the same way. A tool whose input has no required
+  field then runs; one with a required field answers `-32602`.
 - **Framing is the protocol SDK's** (`rmcp`), including where it departs from JSON-RPC 2.0:
   a line that is not complete JSON is ignored rather than answered with `-32700`, and valid
   JSON whose shape the SDK rejects as a JSON-RPC message (neither a request, a

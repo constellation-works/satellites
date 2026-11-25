@@ -49,6 +49,10 @@ impl<S: 'static> Tool<S> {
     /// that a call can break and still reach the function. A value limit
     /// belongs in a field type whose `Deserialize` refuses what breaks it.
     ///
+    /// A call that leaves its arguments out, or sends an explicit `null`,
+    /// is parsed as an empty object: the protocol SDK decodes the two the
+    /// same way.
+    ///
     /// ```
     /// use cw_mcp::{Access, Tool};
     /// use serde_json::json;
