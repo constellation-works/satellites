@@ -231,6 +231,7 @@ dependencies = [
 name = "cw-testkit"
 version = "0.1.0"
 dependencies = [
+ "rustix",
  "tempfile",
  "thiserror",
 ]

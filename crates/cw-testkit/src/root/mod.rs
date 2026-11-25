@@ -11,8 +11,9 @@ use crate::child;
 ///
 /// The directory is created owner-only (`0700` on Unix) under the system
 /// temporary directory, and so are `home/` and `bin/`: the mode is set
-/// explicitly after each directory is made, so a restrictive umask cannot
-/// leave one narrower than `0700`. It holds:
+/// explicitly after each directory is made, through a handle opened without
+/// following links, so a restrictive umask cannot leave one narrower than
+/// `0700`. It holds:
 ///
 /// - `home/`: the `HOME` a child sees, created empty;
 /// - `bin/`: first on the `PATH` a child sees, created empty, for fake
@@ -225,9 +226,16 @@ fn create_private_dir(path: &Path) -> Result<(), Error> {
     set_private(path)
 }
 
-/// Set `path` to `0700` on Unix. The mode given at creation goes through the
-/// umask, so it alone can leave a directory narrower (`0500` under
-/// `umask 0277`, which also stops the kit creating anything inside).
+/// Set the directory just created at `path` to `0700` on Unix. The mode
+/// given at creation goes through the umask, so it alone can leave a
+/// directory narrower (`0500` under `umask 0277`, which also stops the kit
+/// creating anything inside).
+///
+/// The mode is set through a handle, not by path: the directory is opened
+/// without following a link and only if it is a directory, then changed
+/// with `fchmod`. If the entry was replaced by a link since it was made,
+/// the open fails instead of changing the link's target; a directory
+/// another user put in its place is theirs, so the change is refused.
 #[cfg_attr(
     not(unix),
     allow(clippy::unnecessary_wraps, reason = "modes are Unix-only")
@@ -235,14 +243,21 @@ fn create_private_dir(path: &Path) -> Result<(), Error> {
 fn set_private(path: &Path) -> Result<(), Error> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).map_err(
-            |source| Error::Io {
-                action: "set the mode of",
+        use rustix::fs::{Mode, OFlags};
+        let io = |action: &'static str| {
+            move |errno: rustix::io::Errno| Error::Io {
+                action,
                 path: path.to_path_buf(),
-                source,
-            },
-        )?;
+                source: errno.into(),
+            }
+        };
+        let dir = rustix::fs::open(
+            path,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(io("open the new directory"))?;
+        rustix::fs::fchmod(&dir, Mode::RWXU).map_err(io("set the mode of"))?;
     }
     #[cfg(not(unix))]
     let _ = path;
