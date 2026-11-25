@@ -1,7 +1,6 @@
 //! Serving a connection on a private runtime.
 
 use super::handler::Handler;
-use super::intake::pump;
 use crate::error::{Error, Result};
 use crate::server::Server;
 use rmcp::ServiceExt as _;
@@ -17,9 +16,6 @@ pub(crate) fn runtime() -> Result<tokio::runtime::Runtime> {
         .build()
         .map_err(Error::Runtime)
 }
-
-/// How many bytes the pipe from the intake pump to the SDK buffers.
-const PIPE: usize = 1 << 16;
 
 /// How long the runtime waits, once the session has ended, for a tool
 /// function still running before abandoning it. The SDK has already waited
@@ -58,11 +54,7 @@ where
     R: AsyncRead + Send + Unpin + 'static,
     W: AsyncWrite + Send + Unpin + 'static,
 {
-    // The SDK reads the input through the intake pump, which marks what the
-    // SDK would otherwise decode wrongly.
-    let (pumped, sdk_input) = tokio::io::duplex(PIPE);
-    tokio::spawn(pump(input, pumped));
-    let running = match Handler::new(server.shared).serve((sdk_input, output)).await {
+    let running = match Handler::new(server.shared).serve((input, output)).await {
         Ok(running) => running,
         Err(ServerInitializeError::ConnectionClosed(_)) => return Ok(()),
         Err(error) => return Err(Error::Connection(Box::new(error))),
