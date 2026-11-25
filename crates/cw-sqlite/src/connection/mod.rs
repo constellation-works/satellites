@@ -20,9 +20,11 @@
 //!   (`SQLITE_FCNTL_PERSIST_WAL`), so a read-only reader finds them. A
 //!   database a newer build migrated is refused, by a reader before the
 //!   read-write open and again under the write lock; the refusal writes no
-//!   database content and changes no main file or `-wal` of its own, though
-//!   in a writable directory SQLite may rebuild the `-shm`, its index, as
-//!   any connection's first attach may. (A refused connection that closes last may still
+//!   database content and leaves the main file and any existing `-wal`
+//!   data alone, though in a writable directory SQLite may rebuild the
+//!   `-shm`, its index, as any connection's first attach may, and may
+//!   create a missing `-wal`, empty and owner-only, before the version
+//!   check refuses. (A refused connection that closes last may still
 //!   checkpoint committed WAL pages into the main file, which changes
 //!   neither its content nor its version.) The database file is never
 //!   opened outside SQLite: closing such a descriptor would drop the POSIX
@@ -44,10 +46,13 @@
 //!   process cannot write, which no writer here could use either, it opens
 //!   the index read-only (`readonly_shm=1`); SQLite may still create a
 //!   missing `-wal`, owner-only. In a directory this process cannot write
-//!   (a copy, a read-only mount), no file is opened writable: the index is
+//!   (a copy, a read-only mount), a reader writes nothing: the index is
 //!   opened read-only, and when SQLite cannot read the WAL that way the
 //!   reader opens the main file with `immutable=1` and says so, or is
-//!   refused when the `-wal` has content. In a writable directory the main
+//!   refused when the `-wal` has content. SQLite's WAL open asks for
+//!   read-write on an existing owner-writable `-wal`, falling back to
+//!   read-only, so it may hold one open read-write; a read-only connection
+//!   writes nothing through it. In a writable directory the main
 //!   file is never trusted alone.
 //! - **Pragmas** are set with plain SQL, not `rusqlite`'s helper, which reads
 //!   the schema first and so fails on a read-only directory.

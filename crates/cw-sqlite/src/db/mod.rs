@@ -129,7 +129,7 @@ impl Db {
     /// state, even while a write is in progress. In a directory this process
     /// can write, it shares the `-shm` index, which SQLite may rebuild, and
     /// SQLite creates a missing `-wal` or `-shm`, owner-only; in one it
-    /// cannot write, no file is opened writable. See
+    /// cannot write, it writes nothing. See
     /// [`crate::Reader::immutable`] for that case.
     ///
     /// # Errors

@@ -90,7 +90,7 @@ pub(crate) fn open(path: &Path, migrations: &[Step], wait: Duration) -> Result<R
 ///   writer here could use either), the reader opens it read-only
 ///   (`readonly_shm=1`) instead, and SQLite may still create a missing
 ///   `-wal`, owner-only. The main file is never trusted alone.
-/// - **Not writable:** no file there is opened writable. The index is
+/// - **Not writable:** the reader writes nothing there. The index is
 ///   opened read-only; when SQLite cannot read the WAL that way (the `-shm`
 ///   or the `-wal` is missing), no writer can exist, so the main file is a
 ///   static copy. With nothing in the `-wal` it is the whole database and

@@ -104,8 +104,8 @@ pub(crate) fn wal_has_content(path: &Path) -> Result<bool> {
 }
 
 /// Whether this process, with its effective credentials, may create files
-/// in the database's directory. When it may not, the reader opens no file
-/// there writable, and when the WAL cannot be read, no writer can exist
+/// in the database's directory. When it may not, the reader writes nothing
+/// there, and when the WAL cannot be read, no writer can exist
 /// there either (it would need to create the `-wal` or `-shm`), so the main
 /// file is static: a copy, or a database on a read-only mount.
 pub(crate) fn directory_writable(path: &Path) -> Result<bool> {
