@@ -46,8 +46,13 @@ files=$(find "$src" -name '*.rs' -print) ||
 [ -n "$files" ] ||
   { printf 'mcp private runtime: cannot run: no Rust source under %s\n' "$src" >&2; exit 2; }
 
+# Sorted on its own, so a failing sort is seen: in a pipeline into the loop
+# its status would be lost and the loop would read nothing and pass.
+sorted=$(printf '%s\n' "$files" | LC_ALL=C sort) && [ -n "$sorted" ] ||
+  { printf 'mcp private runtime: cannot run: cannot sort the source list\n' >&2; exit 2; }
+
 # The loop runs in a subshell (it reads a pipe), so it hands its status out.
-printf '%s\n' "$files" | LC_ALL=C sort | {
+printf '%s\n' "$sorted" | {
 while IFS= read -r file; do
   relative=${file#"$root"/}
   source=$(cat -- "$file") || { fail "cannot read $relative"; continue; }
