@@ -8,28 +8,35 @@ use std::time::{Duration, Instant};
 /// ends close to the deadline. Past the end, the last step repeats.
 const STEPS_MS: [u64; 5] = [1, 2, 4, 8, 16];
 
+/// The longest lock wait, as SQLite's `busy_timeout` capped it: `i32::MAX`
+/// milliseconds, about 24.8 days. A longer wait is cut to this, so no wait
+/// is unbounded.
+const LONGEST: Duration = Duration::from_millis(i32::MAX as u64);
+
 /// The moment one call stops waiting for another connection: its lock wait
-/// after the call started, by [`Instant`]. Every wait in the call shares it.
+/// after the call started, by [`Instant`]. Every wait in the call that goes
+/// through the busy handler shares it.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Deadline {
-    /// `None` when the wait reaches past what an [`Instant`] can hold: the
-    /// deadline never passes.
-    at: Option<Instant>,
+    /// When the call started.
+    started: Instant,
+    /// The lock wait, at most [`LONGEST`]. What is left is this less the
+    /// time elapsed, so no deadline can overflow the clock.
+    wait: Duration,
 }
 
 impl Deadline {
-    /// `wait` from now.
+    /// `wait` from now, at most [`LONGEST`].
     pub(crate) fn after(wait: Duration) -> Self {
         Self {
-            at: Instant::now().checked_add(wait),
+            started: Instant::now(),
+            wait: wait.min(LONGEST),
         }
     }
 
     /// What is left of the wait; zero once the deadline has passed.
     pub(crate) fn left(self) -> Duration {
-        self.at.map_or(Duration::MAX, |at| {
-            at.saturating_duration_since(Instant::now())
-        })
+        self.wait.saturating_sub(self.started.elapsed())
     }
 
     /// Whether the deadline has passed.
