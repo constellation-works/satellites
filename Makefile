@@ -95,7 +95,8 @@ standards-check:
 	fi
 
 # The kit crates depend on each other only as the script's table allows,
-# and cw-base names no file, environment or process API. No compile.
+# cw-base names no file, environment or process API, and cw-cli asks about
+# terminal state only in src/terminal/. No compile.
 dependency-direction:
 	sh scripts/check-dependency-direction.sh
 

@@ -18,7 +18,11 @@ cw-fs = { path = "crates/cw-fs", version = "0.1.0" }
 cw-supervise = { path = "crates/cw-supervise", version = "0.1.0" }
 cw-sqlite = { path = "crates/cw-sqlite", version = "0.1.0" }
 cw-app = { path = "crates/cw-app", version = "0.1.0" }
+cw-cli = { path = "crates/cw-cli", version = "0.1.0" }
 
+# cw-cli builds clap without `color` and `wrap_help`: both make clap ask the
+# terminal on its own, and cw-cli makes that decision once (STD-01 R17).
+clap = { version = "4.6", default-features = false, features = ["std", "help", "usage", "error-context", "suggestions"] }
 # cw-sqlite builds its own SQLite and re-exports rusqlite, so a project names one version.
 rusqlite = { version = "0.43", default-features = false, features = ["bundled", "cache"] }
 rustix = { version = "1.1", default-features = false, features = ["std", "fs", "process"] }
@@ -27,6 +31,9 @@ serde_json = "1.0.145"
 tempfile = "3.25"
 thiserror = "2.0.18"
 time = { version = "0.3.47", default-features = false, features = ["std", "formatting", "parsing"] }
+tracing = { version = "0.1.41", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3.20", default-features = false, features = ["std", "fmt", "env-filter"] }
+unicode-width = { version = "0.2.2", default-features = false }
 
 # STD-02 lint baseline, verbatim from the standard. Do not trim it; add to it.
 # Workspace-wide lint config. Each crate opts in via `[lints] workspace = true`.

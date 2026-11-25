@@ -1,0 +1,30 @@
+[package]
+name = "cw-cli"
+version.workspace = true
+description = "What every command line repeats: one terminal decision, a payload-only stdout sink with borderless tables, error rendering with exit codes, logging to stderr and grouped root help."
+readme = "README.md"
+keywords = ["cli", "terminal", "output", "table", "help"]
+categories = ["command-line-interface"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# cw-cli depends on cw-base and cw-app only (scripts/check-dependency-direction.sh).
+[dependencies]
+cw-app.workspace = true
+cw-base.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+unicode-width.workspace = true
+
+# The terminal width is asked of stdout where the platform has a terminal.
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["termios"] }
+
+[lints]
+workspace = true
