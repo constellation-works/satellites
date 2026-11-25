@@ -104,9 +104,9 @@ pub(crate) fn wal_has_content(path: &Path) -> Result<bool> {
 }
 
 /// Whether this process may create files in the database's directory. When
-/// it may not, no writer can exist there either (it would need to create
-/// the `-wal` and `-shm`), so the main file is static: a copy, or a
-/// database on a read-only mount.
+/// it may not and the index cannot be read, no writer can exist there
+/// either (it would need to create the `-wal` or `-shm`), so the main file
+/// is static: a copy, or a database on a read-only mount.
 pub(crate) fn directory_writable(path: &Path) -> Result<bool> {
     let dir = match path.parent() {
         Some(dir) if !dir.as_os_str().is_empty() => dir,
@@ -121,9 +121,33 @@ pub(crate) fn directory_writable(path: &Path) -> Result<bool> {
     })
 }
 
+/// Whether this process can write the `-shm` index of the database at
+/// `path`: the `-shm` itself when it exists, or else the directory, where
+/// SQLite would create it.
+pub(crate) fn index_writable(path: &Path) -> Result<bool> {
+    let shm = sidecar(path, "-shm");
+    let exists = match std::fs::symlink_metadata(&shm) {
+        Ok(_) => true,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => false,
+        Err(source) => return Err(check_failed(&shm, source)),
+    };
+    if !exists {
+        return directory_writable(path);
+    }
+    writable(&shm).map_err(|source| check_failed(&shm, source))
+}
+
+fn check_failed(path: &Path, source: io::Error) -> Error {
+    Error::File(cw_fs::Error::Io {
+        action: "check whether it can write",
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
 #[cfg(unix)]
-fn writable(dir: &Path) -> io::Result<bool> {
-    match rustix::fs::access(dir, rustix::fs::Access::WRITE_OK) {
+fn writable(path: &Path) -> io::Result<bool> {
+    match rustix::fs::access(path, rustix::fs::Access::WRITE_OK) {
         Ok(()) => Ok(true),
         Err(e) if e == rustix::io::Errno::ACCESS || e == rustix::io::Errno::ROFS => Ok(false),
         Err(e) => Err(e.into()),
@@ -131,6 +155,6 @@ fn writable(dir: &Path) -> io::Result<bool> {
 }
 
 #[cfg(not(unix))]
-fn writable(dir: &Path) -> io::Result<bool> {
-    Ok(!std::fs::metadata(dir)?.permissions().readonly())
+fn writable(path: &Path) -> io::Result<bool> {
+    Ok(!std::fs::metadata(path)?.permissions().readonly())
 }

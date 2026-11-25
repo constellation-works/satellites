@@ -1,10 +1,11 @@
 //! Opening a read-only connection.
 
-use super::files::{directory_writable, wal_has_content};
+use super::files::{directory_writable, index_writable, wal_has_content};
 use super::{get_pragma, inspect, resolve, set_pragma};
 use crate::error::{Error, Result, is_wal_unreadable};
 use crate::migration;
 use crate::migration::Step;
+use rusqlite::config::DbConfig;
 use rusqlite::{Connection, OpenFlags};
 use std::ops::Deref;
 use std::path::Path;
@@ -44,8 +45,8 @@ impl Reader {
 
     /// Whether the WAL could not be read and the database was opened with
     /// `immutable=1`: a copy, or a database on a read-only mount, in a
-    /// directory this process cannot write, with no readable index and
-    /// nothing in its `-wal`. What it reads is the main file alone, so a
+    /// directory this process cannot write, with no index it can write or
+    /// read and nothing in its `-wal`. What it reads is the main file alone, so a
     /// caller may say that the view is a copy's.
     #[must_use]
     pub fn immutable(&self) -> bool {
@@ -75,17 +76,25 @@ pub(crate) fn open(path: &Path, migrations: &[Step], wait: Duration) -> Result<R
 
 /// [`open`] on `real`, the already resolved `path`.
 ///
-/// It writes nothing of its own: the `-shm` index is opened read-only. When
-/// SQLite cannot read the WAL that way (the `-shm` or the `-wal` is
-/// missing), what follows depends on the directory:
+/// SQLite keeps one mapping of a database's `-shm` index per process, made
+/// by the first connection that opens it and shared by every later one. So
+/// how a reader opens the index decides it for a writer in this process:
 ///
-/// - **Not writable:** no writer can exist there, so the main file is a
-///   static copy. With nothing in the `-wal`, it is the whole database and
-///   is opened `immutable=1`, and the reader says so; with WAL content the
-///   main file may lack committed pages, and the read is refused.
-/// - **Writable:** a writer may exist, so the main file is never trusted
-///   alone. The reader opens again with a shared `-shm`, and SQLite creates
-///   the missing `-wal` (empty) and `-shm`, owner-only like the database.
+/// - **The index is writable** by this process (the `-shm` exists and is
+///   writable, or is missing in a directory this process can write): the
+///   reader shares it, and SQLite creates a missing `-wal` (empty) and
+///   `-shm`, owner-only like the database. A writer in this process then
+///   finds the index writable, whether the reader opened it first or not.
+/// - **The index is not writable:** no writer in this process can use it,
+///   so opening it read-only (`readonly_shm=1`) takes nothing from one, and
+///   the reader writes nothing at all. When SQLite cannot read the WAL that
+///   way (the `-shm` or the `-wal` is missing), a directory this process
+///   can write may hold a writer of its own, so the main file is never
+///   trusted alone and the read is refused; in a directory it cannot write,
+///   the main file is a static copy. With nothing in the `-wal` it is the
+///   whole database and is opened `immutable=1`, and the reader says so;
+///   with WAL content the main file may lack committed pages, and the read
+///   is refused.
 pub(crate) fn open_resolved(
     path: &Path,
     real: &Path,
@@ -97,16 +106,18 @@ pub(crate) fn open_resolved(
             path: path.to_path_buf(),
         });
     }
-    match open_as(path, real, migrations, wait, Open::ReadOnlyIndex) {
+    let first = if index_writable(real)? {
+        Open::SharedIndex
+    } else {
+        Open::ReadOnlyIndex
+    };
+    match open_as(path, real, migrations, wait, first) {
         Err(Attempt::WalUnreadable(e)) => {
-            let next = if directory_writable(real)? {
-                Open::SharedIndex
-            } else if wal_has_content(real)? {
+            if directory_writable(real)? || wal_has_content(real)? {
                 return Err(Error::sqlite("read the write-ahead log of", path, e));
-            } else {
-                Open::Immutable
-            };
-            open_as(path, real, migrations, wait, next).map_err(|attempt| attempt.into_error(path))
+            }
+            open_as(path, real, migrations, wait, Open::Immutable)
+                .map_err(|attempt| attempt.into_error(path))
         }
         result => result.map_err(|attempt| attempt.into_error(path)),
     }
@@ -149,10 +160,11 @@ fn open_as(
     how: Open,
 ) -> Result<Reader, Attempt> {
     let immutable = how == Open::Immutable;
-    let first = how == Open::ReadOnlyIndex;
+    // Only a read-only index has a fallback; see `open_resolved`.
+    let may_fall_back = how == Open::ReadOnlyIndex;
     let sqlite = |action| {
         move |e: rusqlite::Error| {
-            if first && is_wal_unreadable(&e) {
+            if may_fall_back && is_wal_unreadable(&e) {
                 Attempt::WalUnreadable(e)
             } else {
                 Attempt::Failed(Error::sqlite(action, path, e))
@@ -173,6 +185,11 @@ fn open_as(
             | OpenFlags::SQLITE_OPEN_NOFOLLOW,
     )
     .map_err(sqlite("open"))?;
+    // A reader that closes last must not try to checkpoint: that would take
+    // the database's exclusive lock, and a read-only connection could not
+    // write the pages anyway.
+    conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)
+        .map_err(sqlite("configure"))?;
     set_pragma(&conn, "busy_timeout", super::writer::millis(wait)).map_err(sqlite("configure"))?;
     set_pragma(&conn, "query_only", "ON").map_err(sqlite("configure"))?;
     // One read transaction for the reader's life: the version checked below

@@ -25,17 +25,23 @@
 //!   neither its content nor its version.) The database file is never
 //!   opened outside SQLite: closing such a descriptor would drop the POSIX
 //!   locks of every SQLite connection to it in this process.
-//! - **Readers** open read-only and `query_only`, take no lock and write
-//!   nothing of their own: the `-shm` index is opened read-only
-//!   (`readonly_shm=1`). A reader holds one read transaction, opened by its
-//!   version check, so all it reads is from the version it checked, until
-//!   the caller ends that transaction. When SQLite cannot read the WAL that
-//!   way, a reader in a directory this process cannot write (a copy, a
-//!   read-only mount, where no writer can exist) opens the main file with
+//! - **Readers** open read-only and `query_only`, take no lock that blocks
+//!   a writer, and write no row: closing one never checkpoints. A reader
+//!   holds one read transaction, opened by its version check, so all it
+//!   reads is from the version it checked, until the caller ends that
+//!   transaction. SQLite maps a database's `-shm` index once per process,
+//!   so a reader opens it the way a writer in this process needs it. Where
+//!   this process can write the index (the `-shm` is writable, or missing
+//!   in a writable directory), the reader shares it: it may update the
+//!   `-shm` in place, and SQLite creates a missing `-wal` (empty) and
+//!   `-shm`, owner-only like the database. Where it cannot, no writer in
+//!   this process could use the index either, and the reader opens it
+//!   read-only (`readonly_shm=1`) and writes nothing at all. When SQLite
+//!   cannot read the WAL that way, a reader in a directory this process
+//!   cannot write (a copy, a read-only mount) opens the main file with
 //!   `immutable=1` and says so, or is refused when the `-wal` has content;
-//!   a reader in a writable directory opens again with a shared index, and
-//!   SQLite creates a missing `-wal` (empty) and `-shm`, owner-only like the
-//!   database.
+//!   in a writable directory the read is refused, since the main file alone
+//!   may lack a writer's committed pages.
 //! - **Pragmas** are set with plain SQL, not `rusqlite`'s helper, which reads
 //!   the schema first and so fails on a read-only directory.
 
