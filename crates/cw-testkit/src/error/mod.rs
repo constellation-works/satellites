@@ -46,6 +46,19 @@ pub enum Error {
         path: PathBuf,
     },
 
+    /// The system temporary directory is writable by group or other and not
+    /// sticky (Unix only), so another user could replace the temp root
+    /// between its creation and its mode change. A private directory or a
+    /// sticky one such as `/tmp` is accepted.
+    #[error(
+        "temporary directory {} is writable by other users and not sticky, so the temp root could be replaced; point the temporary directory ({TEMP_DIR_VARS}) at a private or sticky directory",
+        path.display()
+    )]
+    ReplaceableTempParent {
+        /// The temporary directory refused.
+        path: PathBuf,
+    },
+
     /// A golden name is empty, absolute or leaves the goldens folder.
     #[error(
         "golden name {name:?} is not valid: it must be a relative path inside the goldens folder"

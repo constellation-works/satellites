@@ -7,9 +7,12 @@ machine it runs on. `cw-testkit` is a dev-dependency that gives each test:
   programs and the application's data root (`root/`, left for the program to create). It is
   parameterised by the application's environment prefix: `TempRoot::new("MYAPP")` points
   `MYAPP_ROOT` at it. The root, `home/` and `bin/` are set to `0700` explicitly after they are
-  made, through a handle opened without following links (`fchmod`), so a restrictive umask (`0277`, say) cannot leave them narrower. A root whose `bin/`
-  path contains the `PATH` separator (`:` on Unix, which a `TMPDIR` can carry; `;` on Windows, from `TMP` or `TEMP`) is refused with
-  an error naming the path, because it would split the child's `PATH`. Drop removes it
+  made, so a restrictive umask (`0277` or `0477`, say) cannot leave them narrower. On Unix the
+  system temporary directory must be private or sticky (like `/tmp`): one writable by group or
+  other without the sticky bit is refused with an error naming it, since another user could
+  replace the root there before its mode is set. A root whose `bin/` path contains the `PATH`
+  separator (`:` on Unix, which a `TMPDIR` can carry; `;` on Windows, from `TMP` or `TEMP`) is
+  refused with an error naming the path, because it would split the child's `PATH`. Drop removes it
   best-effort and ignores a failure; `close()` removes it and returns the error.
 - **`TempRoot::command`** — a `std::process::Command` run in the temp root, whose environment
   is cleared, then given only `HOME`, `PATH` (the temp root's `bin/`, then `/usr/bin:/bin`),

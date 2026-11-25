@@ -11,9 +11,17 @@ use crate::child;
 ///
 /// The directory is created owner-only (`0700` on Unix) under the system
 /// temporary directory, and so are `home/` and `bin/`: the mode is set
-/// explicitly after each directory is made, through a handle opened without
-/// following links, so a restrictive umask cannot leave one narrower than
-/// `0700`. It holds:
+/// explicitly after each directory is made, so a restrictive umask cannot
+/// leave one narrower than `0700`.
+///
+/// On Unix the system temporary directory must be one no other user can
+/// replace entries in: private to its owner (not writable by group or
+/// other) or sticky (`/tmp`'s `1777`). Otherwise another user could swap
+/// the new root for something of their own between its creation and its
+/// mode change, so [`new`](Self::new) refuses it. Once the root is `0700`,
+/// nobody else can replace the directories the kit makes inside it.
+///
+/// It holds:
 ///
 /// - `home/`: the `HOME` a child sees, created empty;
 /// - `bin/`: first on the `PATH` a child sees, created empty, for fake
@@ -47,20 +55,25 @@ impl TempRoot {
     /// [`Error::PathSeparatorInRoot`] if the `bin/` path contains the
     /// platform's `PATH` separator (`:` on Unix, `;` on Windows), which would
     /// split a child's `PATH` (the system temporary directory, from `TMPDIR`
-    /// on Unix and `TMP` or `TEMP` on Windows, decides that path); [`Error::Io`] if a directory cannot be
-    /// created or given its mode.
+    /// on Unix and `TMP` or `TEMP` on Windows, decides that path);
+    /// [`Error::ReplaceableTempParent`] on Unix if the system temporary
+    /// directory is writable by group or other and not sticky;
+    /// [`Error::Io`] if a directory cannot be inspected, created or given its
+    /// mode.
     pub fn new(prefix: &str) -> Result<Self, Error> {
         if !valid_prefix(prefix) {
             return Err(Error::InvalidPrefix {
                 prefix: prefix.to_owned(),
             });
         }
+        let parent = std::env::temp_dir();
+        refuse_replaceable_parent(&parent)?;
         let dir = private_dir_builder()
             .prefix("cw-testkit.")
             .tempdir()
             .map_err(|source| Error::Io {
                 action: "create the temp root",
-                path: std::env::temp_dir(),
+                path: parent,
                 source,
             })?;
         set_private(dir.path())?;
@@ -226,16 +239,43 @@ fn create_private_dir(path: &Path) -> Result<(), Error> {
     set_private(path)
 }
 
-/// Set the directory just created at `path` to `0700` on Unix. The mode
-/// given at creation goes through the umask, so it alone can leave a
-/// directory narrower (`0500` under `umask 0277`, which also stops the kit
-/// creating anything inside).
-///
-/// The mode is set through a handle, not by path: the directory is opened
-/// without following a link and only if it is a directory, then changed
-/// with `fchmod`. If the entry was replaced by a link since it was made,
-/// the open fails instead of changing the link's target; a directory
-/// another user put in its place is theirs, so the change is refused.
+/// Refuse a temporary parent in which another user could replace the root:
+/// writable by group or other and not sticky. Links to it are followed, as
+/// creating the root follows them.
+#[cfg_attr(
+    not(unix),
+    allow(clippy::unnecessary_wraps, reason = "the rule is Unix-only")
+)]
+fn refuse_replaceable_parent(parent: &Path) -> Result<(), Error> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(parent)
+            .map_err(|source| Error::Io {
+                action: "inspect the temporary directory",
+                path: parent.to_path_buf(),
+                source,
+            })?
+            .permissions()
+            .mode();
+        let shared = mode & 0o022 != 0;
+        let sticky = mode & 0o1000 != 0;
+        if shared && !sticky {
+            return Err(Error::ReplaceableTempParent {
+                path: parent.to_path_buf(),
+            });
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = parent;
+    Ok(())
+}
+
+/// Set `path` to `0700` on Unix. The mode given at creation goes through the
+/// umask, so it alone can leave a directory narrower (`0500` under
+/// `umask 0277`, which also stops the kit creating anything inside). The
+/// path is safe to change by name: the root's parent was checked to let no
+/// other user replace it, and the kit's subdirectories sit in the root.
 #[cfg_attr(
     not(unix),
     allow(clippy::unnecessary_wraps, reason = "modes are Unix-only")
@@ -243,21 +283,14 @@ fn create_private_dir(path: &Path) -> Result<(), Error> {
 fn set_private(path: &Path) -> Result<(), Error> {
     #[cfg(unix)]
     {
-        use rustix::fs::{Mode, OFlags};
-        let io = |action: &'static str| {
-            move |errno: rustix::io::Errno| Error::Io {
-                action,
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).map_err(
+            |source| Error::Io {
+                action: "set the mode of",
                 path: path.to_path_buf(),
-                source: errno.into(),
-            }
-        };
-        let dir = rustix::fs::open(
-            path,
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::empty(),
-        )
-        .map_err(io("open the new directory"))?;
-        rustix::fs::fchmod(&dir, Mode::RWXU).map_err(io("set the mode of"))?;
+                source,
+            },
+        )?;
     }
     #[cfg(not(unix))]
     let _ = path;
