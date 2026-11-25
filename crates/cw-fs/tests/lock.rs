@@ -378,6 +378,8 @@ fn child_acquires_with_no_room_for_the_record() -> TestResult {
 fn a_lock_whose_holder_record_cannot_be_written_is_still_acquired() -> TestResult {
     use std::io::Read as _;
     let name = "child_acquires_with_no_room_for_the_record";
+    // The child gets a temporary home, not the developer's.
+    let home = tempfile::tempdir()?;
     // `sh` sets the limit and ignores the signal, and both survive the exec
     // into this test binary.
     let mut child = HeldByChild {
@@ -386,6 +388,7 @@ fn a_lock_whose_holder_record_cannot_be_written_is_still_acquired() -> TestResul
             .arg(std::env::current_exe()?)
             .args([name, "--exact", "--ignored", "--test-threads=1"])
             .env(NO_ROOM_ENV, "1")
+            .env("HOME", home.path())
             .stdout(Stdio::piped())
             .spawn()?,
     };
