@@ -42,10 +42,26 @@ fn close_reports_a_tree_it_cannot_remove() {
     assert!(matches!(err, cw_testkit::Error::Io { .. }), "{err:?}");
 }
 
-/// Set on the child a regression test reruns itself in; its value is what
-/// the child checks.
+/// Set on the child a regression test reruns itself in, to the fixture the
+/// parent arranged, which the child checks it received.
 #[cfg(unix)]
 const RERUN: &str = "CWTEST_ROOT_RERUN";
+
+/// The explicit argument a rerun child gets: an extra name filter that
+/// matches no test. A test takes its child branch only when it has both
+/// this argument and [`RERUN`], so a marker inherited from the developer's
+/// shell never skips the regression inputs.
+#[cfg(unix)]
+const CHILD_ARG: &str = "cwtest-root-rerun-child";
+
+/// The fixture this process was rerun with, or `None` in the parent.
+#[cfg(unix)]
+fn rerun_fixture() -> Option<std::ffi::OsString> {
+    if !std::env::args_os().any(|arg| arg == CHILD_ARG) {
+        return None;
+    }
+    Some(std::env::var_os(RERUN).expect("a rerun child has its fixture marker"))
+}
 
 /// How long a rerun child may take before the parent kills it and fails.
 #[cfg(unix)]
@@ -77,11 +93,19 @@ fn drain(pipe: impl std::io::Read + Send + 'static) -> std::thread::JoinHandle<S
     })
 }
 
-/// Rerun the test `name` in a kit child with `TMPDIR` at `tmpdir`, through
-/// `sh -c <script>` so the script can change the child's process state
-/// first, and require that it passed within [`CHILD_DEADLINE`].
+/// Rerun the test `name` in a kit child with `TMPDIR` at `tmpdir` and
+/// [`RERUN`] at `fixture`, through `sh -c <script>` so the script can change
+/// the child's process state first, and require that it passed within
+/// [`CHILD_DEADLINE`]. The kit command starts from a cleared environment, so
+/// any marker this process inherited is not passed on; only `fixture` is.
 #[cfg(unix)]
-fn rerun(outer: &TempRoot, name: &str, tmpdir: &std::path::Path, script: &str) {
+fn rerun(
+    outer: &TempRoot,
+    name: &str,
+    tmpdir: &std::path::Path,
+    script: &str,
+    fixture: &std::ffi::OsStr,
+) {
     use std::process::Stdio;
 
     std::fs::create_dir_all(tmpdir).expect("create the child's TMPDIR");
@@ -90,9 +114,9 @@ fn rerun(outer: &TempRoot, name: &str, tmpdir: &std::path::Path, script: &str) {
             .command("sh")
             .args(["-c", script])
             .arg(std::env::current_exe().expect("test binary"))
-            .args(["--exact", name, "--test-threads", "1"])
+            .args(["--exact", name, CHILD_ARG, "--test-threads", "1"])
             .env("TMPDIR", tmpdir)
-            .env(RERUN, "1")
+            .env(RERUN, fixture)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -125,16 +149,31 @@ fn rerun(outer: &TempRoot, name: &str, tmpdir: &std::path::Path, script: &str) {
 #[test]
 fn a_temp_root_whose_bin_path_would_split_path_is_refused() {
     let name = "a_temp_root_whose_bin_path_would_split_path_is_refused";
-    if std::env::var_os(RERUN).is_none() {
+    let Some(fixture) = rerun_fixture() else {
         let outer = TempRoot::new("CWTEST").expect("create temp root");
+        let tmpdir = outer.elsewhere("tmp:split");
         rerun(
             &outer,
             name,
-            &outer.elsewhere("tmp:split"),
+            &tmpdir,
             r#"exec "$0" "$@""#,
+            tmpdir.as_os_str(),
         );
         return;
-    }
+    };
+    // The child got the fixture: its temporary directory is the one with a
+    // colon that the parent made.
+    let tmpdir = std::env::temp_dir();
+    assert_eq!(
+        tmpdir.as_os_str(),
+        fixture,
+        "the child's temporary directory"
+    );
+    assert!(
+        tmpdir.to_string_lossy().contains(':'),
+        "{}",
+        tmpdir.display()
+    );
     let err = TempRoot::new("CWTEST").expect_err("a bin path with ':' must be refused");
     let cw_testkit::Error::PathSeparatorInRoot { path } = &err else {
         panic!("unexpected error: {err:?}");
@@ -152,16 +191,35 @@ fn the_kit_directories_are_owner_only_under_a_restrictive_umask() {
     use std::os::unix::fs::PermissionsExt;
 
     let name = "the_kit_directories_are_owner_only_under_a_restrictive_umask";
-    if std::env::var_os(RERUN).is_none() {
+    let Some(fixture) = rerun_fixture() else {
         let outer = TempRoot::new("CWTEST").expect("create temp root");
         rerun(
             &outer,
             name,
             &outer.elsewhere("tmp"),
             r#"umask 0277 && exec "$0" "$@""#,
+            "umask 0277".as_ref(),
         );
         return;
+    };
+    // The child got the fixture: a directory it asks to be 0777 comes out
+    // 0500, so the umask in force is 0277.
+    assert_eq!(fixture, "umask 0277");
+    let probe = std::env::temp_dir().join("umask-probe");
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .mode(0o777)
+            .create(&probe)
+            .expect("create the umask probe");
     }
+    let probed = std::fs::metadata(&probe)
+        .expect("stat")
+        .permissions()
+        .mode()
+        & 0o777;
+    std::fs::remove_dir(&probe).expect("remove the umask probe");
+    assert_eq!(probed, 0o500, "the child's umask leaves {probed:o}");
     let root = TempRoot::new("CWTEST").expect("create temp root under umask 0277");
     for dir in [root.path().to_path_buf(), root.home(), root.bin()] {
         let mode = std::fs::metadata(&dir).expect("stat").permissions().mode() & 0o777;
