@@ -78,10 +78,11 @@ fn refuse_newer_before_writing(
     open_resolved(path, real, migrations, deadline).map(drop)
 }
 
-/// Put the database in WAL mode, which stays set in the file. SQLite does
-/// not call the busy handler for a journal-mode change, so while another
-/// connection holds a new database the switch is retried until the
-/// deadline passes. A database that stays out of WAL is an error.
+/// Put the database in WAL mode, which stays set in the file. SQLite may
+/// wait for the change through the busy handler, or return a busy result
+/// while another connection holds a new database; that is retried here.
+/// Both end at the same deadline. A database that stays out of WAL is an
+/// error.
 fn switch_to_wal(conn: &Connection, path: &Path, deadline: Deadline) -> Result<()> {
     loop {
         let mode = get_pragma::<String>(conn, "journal_mode", None).and_then(|mode| {

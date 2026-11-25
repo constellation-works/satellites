@@ -54,21 +54,22 @@ impl Db {
     /// (about 24.8 days), as `busy_timeout` capped it. It bounds the waits that
     /// go through the connection's busy handler: a lock for the version check
     /// before a write and for the writer's own version read, each migration
-    /// step, and the write lock (`BEGIN IMMEDIATE`); the switch to WAL, for
-    /// which SQLite calls no handler, is retried by the crate to the same
-    /// deadline. One call can wait at several of those points, and all of them
-    /// end at the same deadline, so the call stops waiting close to one lock
-    /// wait after it started, past it by at most the last step's oversleep and
-    /// one retry; a wait that begins after the deadline fails at once. The busy
-    /// handler is the crate's own, not SQLite's `busy_timeout`, which counts
-    /// its planned sleeps and never reads the clock: it reads the clock before
-    /// each retry, sleeps short steps (1 to 16 ms) that end no later than the
-    /// deadline, and gives up once it has passed, with [`Error::Locked`].
-    /// Outside the deadline is SQLite's own retry for a WAL read mark
-    /// (`walTryBeginRead`), which never calls the busy handler: it backs off on
-    /// its own schedule and, when its retries run out, fails with
-    /// `SQLITE_PROTOCOL`, reported as [`Error::Sqlite`], not
-    /// [`Error::Locked`].
+    /// step, and the write lock (`BEGIN IMMEDIATE`); the switch to WAL, whose
+    /// waits end at the same deadline whether SQLite waits through the busy
+    /// handler (as it can when another connection holds a rollback-journal
+    /// database) or returns a busy result, which the crate retries. One call
+    /// can wait at several of those points, and all of them end at the same
+    /// deadline, so the call stops waiting close to one lock wait after it
+    /// started, past it by at most the last step's oversleep and one retry; a
+    /// wait that begins after the deadline fails at once. The busy handler is
+    /// the crate's own, not SQLite's `busy_timeout`, which counts its planned
+    /// sleeps and never reads the clock: it reads the clock before each retry,
+    /// sleeps short steps (1 to 16 ms) that end no later than the deadline, and
+    /// gives up once it has passed, with [`Error::Locked`]. Outside the
+    /// deadline is SQLite's own retry for a WAL read mark (`walTryBeginRead`),
+    /// which never calls the busy handler: it backs off on its own schedule
+    /// and, when its retries run out, fails with `SQLITE_PROTOCOL`, reported as
+    /// [`Error::Sqlite`], not [`Error::Locked`].
     #[must_use]
     pub fn lock_wait(self, wait: Duration) -> Self {
         Self {
