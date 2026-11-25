@@ -1,6 +1,6 @@
 //! The database a project names once, and the three things it does.
 
-use crate::connection::{Reader, open_reader, open_writer};
+use crate::connection::{Deadline, Reader, open_reader, open_writer};
 use crate::error::{Error, Result, ended_transaction};
 use crate::migration;
 use crate::migration::Step;
@@ -47,7 +47,20 @@ impl Db {
     }
 
     /// How long a call waits for another connection before it fails with
-    /// [`Error::Locked`]. It is also each connection's `busy_timeout`.
+    /// [`Error::Locked`], by the clock.
+    ///
+    /// It is one deadline for the whole call: the lock wait after the call
+    /// started, by the clock (`Instant`). A call can meet a busy database more
+    /// than once (the reader that checks the version before a write, the switch
+    /// to WAL, each migration step, the write lock), and every one of those
+    /// waits ends at the same deadline, so a call stops waiting close to one
+    /// lock wait after it started, however many times it waited: past the
+    /// deadline by at most the last step's oversleep and one retry; a wait that
+    /// begins after the deadline fails at once. The busy handler is the crate's
+    /// own, not SQLite's `busy_timeout`, which counts its planned sleeps and
+    /// never reads the clock: it reads the clock before each retry, sleeps
+    /// short steps (1 to 16 ms) that end no later than the deadline, and gives
+    /// up once it has passed, with [`Error::Locked`].
     #[must_use]
     pub fn lock_wait(self, wait: Duration) -> Self {
         Self {
@@ -104,7 +117,7 @@ impl Db {
         let mut conn = open_writer(
             &self.path,
             self.migrations,
-            self.lock_wait,
+            Deadline::after(self.lock_wait),
             self.secure_delete,
         )?;
         let tx = conn
@@ -139,7 +152,7 @@ impl Db {
     /// [`Error::File`] when a file is refused; [`Error::Corrupt`] or
     /// [`Error::Sqlite`] otherwise.
     pub fn read(&self) -> Result<Reader> {
-        open_reader(&self.path, self.migrations, self.lock_wait)
+        open_reader(&self.path, self.migrations, Deadline::after(self.lock_wait))
     }
 
     /// Run `PRAGMA quick_check` on a read-only connection, for a doctor
