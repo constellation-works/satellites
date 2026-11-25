@@ -69,10 +69,12 @@ cw_mcp::serve_stdio(ServerInfo::new("notes", "0.1.0", "notes_internal"), runtime
   client leaves before the handshake. The protocol SDK reports a failure to read the input
   the same way, so it also ends with `Ok(())`; `Error::Connection` means the handshake
   failed or the session ended abnormally.
-- **Shutdown is bounded.** After the input closes, answers in flight get up to 5 s to be
-  written, and a tool function still running gets 2 s more; then it is abandoned on its
-  thread, its answer is never sent, and `serve_stdio` returns. A function that changes data
-  should leave it whole whether or not it runs to the end.
+- **A running tool does not hold up the return.** After the input closes, the SDK gives
+  answers in flight up to 5 s to be written and ends the session; a tool function still
+  running then gets 2 s more, and is abandoned on its thread with its answer never sent. The
+  2 s bounds the wait for a tool only: while standard output cannot be written, the SDK's
+  own close waits on the write first. A function that changes data should leave it whole
+  whether or not it runs to the end.
 
 ## Tests in a project
 

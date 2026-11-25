@@ -33,10 +33,9 @@ pub(crate) fn serve_stdio<S: Send + Sync + 'static>(server: Server<S>) -> Result
 }
 
 /// Run one session on a private runtime, then shut the runtime down within
-/// [`SHUTDOWN_GRACE`]: a tool function still running is abandoned on its
-/// blocking thread rather than waited for, so the caller always gets
-/// control back. Dropping the runtime instead would wait for it without
-/// bound.
+/// [`SHUTDOWN_GRACE`]: a tool function still running once the session has
+/// ended is abandoned on its blocking thread rather than waited for.
+/// Dropping the runtime instead would wait for it without bound.
 pub(crate) fn run<F>(session: impl FnOnce() -> F) -> Result<()>
 where
     F: Future<Output = Result<()>>,

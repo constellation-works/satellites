@@ -20,11 +20,14 @@ use cw_app::Runtime;
 /// calling thread: the server runs on a runtime of its own, and each call
 /// runs its tool's function on a blocking thread.
 ///
-/// Shutdown is bounded. Once the input closes, answers still in flight get
-/// up to 5 s to be written, and a tool function still running after that
-/// gets 2 s more; then it is abandoned on its thread, its answer is never
-/// sent, and this returns. A function that changes data should finish its
-/// change, or leave it whole, without relying on running to the end.
+/// A running tool does not hold up the return. Once the input closes, the
+/// protocol SDK gives answers in flight up to 5 s to be written and then
+/// ends the session; a tool function still running then gets 2 s more, and
+/// is abandoned on its thread with its answer never sent. That 2 s bounds
+/// the wait for a tool only: while standard output cannot be written (a
+/// client that stopped reading), the SDK's own close waits on the write
+/// first, without a bound of this crate's. A function that changes data
+/// should leave it whole whether or not it runs to the end.
 ///
 /// # Errors
 ///
