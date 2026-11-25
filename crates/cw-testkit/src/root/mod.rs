@@ -57,7 +57,8 @@ impl TempRoot {
     /// split a child's `PATH` (the system temporary directory, from `TMPDIR`
     /// on Unix and `TMP` or `TEMP` on Windows, decides that path);
     /// [`Error::ReplaceableTempParent`] on Unix if the system temporary
-    /// directory is writable by group or other and not sticky;
+    /// directory is writable by group or other and is not a sticky directory
+    /// owned by root or the current user;
     /// [`Error::Io`] if a directory cannot be inspected, created or given its
     /// mode.
     pub fn new(prefix: &str) -> Result<Self, Error> {
@@ -240,8 +241,10 @@ fn create_private_dir(path: &Path) -> Result<(), Error> {
 }
 
 /// Refuse a temporary parent in which another user could replace the root:
-/// writable by group or other and not sticky. Links to it are followed, as
-/// creating the root follows them.
+/// writable by group or other, unless it is sticky and owned by root or by
+/// this process's user (the owner of a sticky directory may still remove
+/// any entry in it). Links to it are followed, as creating the root follows
+/// them.
 #[cfg_attr(
     not(unix),
     allow(clippy::unnecessary_wraps, reason = "the rule is Unix-only")
@@ -249,18 +252,17 @@ fn create_private_dir(path: &Path) -> Result<(), Error> {
 fn refuse_replaceable_parent(parent: &Path) -> Result<(), Error> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(parent)
-            .map_err(|source| Error::Io {
-                action: "inspect the temporary directory",
-                path: parent.to_path_buf(),
-                source,
-            })?
-            .permissions()
-            .mode();
-        let shared = mode & 0o022 != 0;
-        let sticky = mode & 0o1000 != 0;
-        if shared && !sticky {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(parent).map_err(|source| Error::Io {
+            action: "inspect the temporary directory",
+            path: parent.to_path_buf(),
+            source,
+        })?;
+        let shared = meta.mode() & 0o022 != 0;
+        let sticky = meta.mode() & 0o1000 != 0;
+        let owner = meta.uid();
+        let trusted_owner = owner == 0 || owner == rustix::process::geteuid().as_raw();
+        if shared && !(sticky && trusted_owner) {
             return Err(Error::ReplaceableTempParent {
                 path: parent.to_path_buf(),
             });

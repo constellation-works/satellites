@@ -46,12 +46,14 @@ pub enum Error {
         path: PathBuf,
     },
 
-    /// The system temporary directory is writable by group or other and not
-    /// sticky (Unix only), so another user could replace the temp root
-    /// between its creation and its mode change. A private directory or a
-    /// sticky one such as `/tmp` is accepted.
+    /// The system temporary directory is writable by group or other and is
+    /// not a sticky directory owned by root or the current user (Unix only), so another user could replace the temp root
+    /// between its creation and its mode change. A private directory is
+    /// accepted, and so is a sticky one such as `/tmp` when root or the
+    /// current user owns it (a sticky directory's owner may still remove
+    /// any entry in it).
     #[error(
-        "temporary directory {} is writable by other users and not sticky, so the temp root could be replaced; point the temporary directory ({TEMP_DIR_VARS}) at a private or sticky directory",
+        "temporary directory {} is writable by other users and not a sticky directory owned by root or by you, so the temp root could be replaced; point the temporary directory ({TEMP_DIR_VARS}) at a private directory or a sticky one owned by root or by you",
         path.display()
     )]
     ReplaceableTempParent {
