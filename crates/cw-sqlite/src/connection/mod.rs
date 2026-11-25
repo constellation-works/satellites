@@ -12,9 +12,9 @@
 //!   `cw-fs`; only the file and its companions are held to the checks. A
 //!   path that is not valid UTF-8, as given or once resolved, is refused.
 //! - **Writers** open read-write, with no create, no mutex and no following
-//!   of a link. `busy_timeout` is the lock wait; the journal mode is WAL,
-//!   and the switch is retried until the wait runs out, because SQLite does
-//!   not call its busy handler for it; `synchronous` is `FULL`, so a
+//!   of a link. The journal mode is WAL; the switch's waits, through the
+//!   busy handler and through the crate's retry of a busy result, end at
+//!   the call's deadline; `synchronous` is `FULL`, so a
 //!   committed transaction survives power loss; `foreign_keys` is on; the
 //!   `-wal` and `-shm` files are kept after the last connection closes
 //!   (`SQLITE_FCNTL_PERSIST_WAL`), so a read-only reader finds them. A
@@ -54,9 +54,33 @@
 //!   read-only, so it may hold one open read-write; a read-only connection
 //!   writes nothing through it. In a writable directory the main
 //!   file is never trusted alone.
+//! - **The lock wait** is one deadline for the whole call: the lock wait
+//!   after the call started, by the clock (`Instant`), at most `i32::MAX`
+//!   milliseconds (about 24.8 days), as `busy_timeout` capped it. It bounds
+//!   the waits that go through the connection's busy handler: a lock for the
+//!   version check before a write and for the writer's own version read, each
+//!   migration step, and the write lock (`BEGIN IMMEDIATE`); the switch to
+//!   WAL, whose waits end at the same deadline whether SQLite waits through
+//!   the busy handler (as it can when another connection holds a
+//!   rollback-journal database) or returns a busy result, which the crate
+//!   retries. One call can wait at several of those points, and all of
+//!   them end at the same deadline, so the call stops waiting close to one
+//!   lock wait after it started, past it by at most the last step's oversleep
+//!   and one retry; a wait that begins after the deadline fails at once. The
+//!   busy handler is the crate's own, not SQLite's `busy_timeout`, which
+//!   counts its planned sleeps and never reads the clock: it reads the clock
+//!   before each retry, sleeps short steps (1 to 16 ms) that end no later
+//!   than the deadline, and gives up once it has passed, with
+//!   `Error::Locked`. Outside the deadline is SQLite's own retry for a WAL
+//!   read mark (`walTryBeginRead`), which never calls the busy handler: it
+//!   backs off on its own schedule and, when its retries run out, fails with
+//!   `SQLITE_PROTOCOL`, reported as `Error::Sqlite`, not
+//!   `Error::Locked`. A [`Reader`] keeps its call's deadline; inside its
+//!   snapshot it never waits.
 //! - **Pragmas** are set with plain SQL, not `rusqlite`'s helper, which reads
 //!   the schema first and so fails on a read-only directory.
 
+mod deadline;
 mod files;
 mod pragma;
 mod reader;
@@ -64,6 +88,7 @@ mod writer;
 
 pub use reader::Reader;
 
+pub(crate) use deadline::Deadline;
 pub(crate) use files::{create_if_missing, inspect, resolve};
 pub(crate) use pragma::{get as get_pragma, set as set_pragma};
 pub(crate) use reader::open as open_reader;

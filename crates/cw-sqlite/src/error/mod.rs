@@ -32,8 +32,10 @@ pub enum Error {
     /// It names no holder. SQLite's locks are byte-range locks on the
     /// database and its `-shm` that record no owner, and recording one beside
     /// them would be a write by every connection, readers included, which
-    /// readers here never make; the wait is SQLite's own busy handler, so
-    /// there is no point at which this crate could read a record either.
+    /// readers here never make.
+    ///
+    /// It comes once the call's lock wait has passed by the clock: see
+    /// [`crate::Db::lock_wait`].
     #[error("{} is locked by another connection; retry when it finishes", path.display())]
     Locked {
         /// The database file.
