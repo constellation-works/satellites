@@ -24,6 +24,12 @@ const CHILD_LABEL: &str = "child holder";
 /// How long a waiter waits for a lock that will not be released.
 const SHORT_WAIT: Duration = Duration::from_millis(100);
 
+// `Lock` stays unwind safe, so a caller can hold one across `catch_unwind`.
+const _: () = {
+    const fn unwind_safe<T: std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
+    unwind_safe::<Lock>();
+};
+
 /// Not a test: the body of the child process [`hold_in_child`] starts. It
 /// takes the lock, says so on stdout, and holds it until stdin closes.
 #[test]

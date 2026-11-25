@@ -143,6 +143,15 @@ impl Lock {
     }
 }
 
+// `Lock` was unwind safe before it kept `holder_error`, and stays so. The
+// stored error is the only field that is not: an `io::Error` may carry a
+// boxed `dyn Error` with no `RefUnwindSafe` bound. That is sound here. The
+// error is set once in `acquire` and never mutated, and `Lock` hands it out
+// only by shared reference, so a panic caught mid-use cannot leave it, or the
+// lock, in a broken state that code after the `catch_unwind` could observe.
+impl std::panic::UnwindSafe for Lock {}
+impl std::panic::RefUnwindSafe for Lock {}
+
 impl Drop for Lock {
     fn drop(&mut self) {
         // Never fail or panic in a destructor. Clearing the record only keeps
