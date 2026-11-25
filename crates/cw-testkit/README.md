@@ -11,9 +11,9 @@ machine it runs on. `cw-testkit` is a dev-dependency that gives each test:
   system temporary directory (resolved once, against the current directory if relative) must
   be private, or sticky (like `/tmp`) and owned by root or the current user: any other one
   writable by group or other is refused with an error naming it, since another user could
-  replace the root there before its mode is set. The kit assumes that directory's ancestors are
-  not writable by other users; replacing an ancestor, or a link in its path, is outside its
-  threat model. A root whose `bin/` path contains the `PATH`
+  replace the root there before its mode is set. Beyond that check the directory itself is
+  trusted, as in `cw-fs` and `cw-sqlite`: its ancestors and any link in its path are used as
+  given, and a process that can swap them can swap the root too. A root whose `bin/` path contains the `PATH`
   separator (`:` on Unix, which a `TMPDIR` can carry; `;` on Windows, from `TMP` or `TEMP`) is
   refused with an error naming the path, because it would split the child's `PATH`. Drop removes it
   best-effort and ignores a failure; `close()` removes it and returns the error.

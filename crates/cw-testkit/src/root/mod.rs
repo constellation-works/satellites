@@ -24,9 +24,9 @@ use crate::child;
 /// refuses it. Once the root is `0700`, nobody else can replace the
 /// directories the kit makes inside it.
 ///
-/// The threat model stops at that directory: the kit assumes its ancestors
-/// are not writable by other users. Replacing an ancestor, or a link in
-/// the temporary directory's path, is not defended against.
+/// Beyond that check the directory itself is trusted, as in `cw-fs` and
+/// `cw-sqlite`: its ancestors and any link in its path are used as given,
+/// and a process that can swap them can swap the root too.
 ///
 /// It holds:
 ///
@@ -261,6 +261,10 @@ fn temp_parent() -> Result<PathBuf, Error> {
         path: parent.clone(),
         source,
     })?;
+    // Joining an empty path would leave a trailing separator.
+    if parent.as_os_str().is_empty() {
+        return Ok(cwd);
+    }
     Ok(cwd.join(parent))
 }
 
