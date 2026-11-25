@@ -44,8 +44,9 @@ on a file that is never deleted, so the kernel releases it when its holder dies.
 - The holder records one JSON line (pid, time, label; at most 4096 bytes, so a long label
   is cut) after acquiring and clears it on release. The record is diagnostic and fails
   open: if it cannot be written or synced, the lock is still acquired, `Lock::holder_error()`
-  returns the failure for the caller to warn about, and a waiter that times out names no
-  holder. A waiter that times out gets `Error::Locked` naming the holder only while that
+  returns the failure for the caller to warn about, and naming the holder becomes best
+  effort: a waiter that times out may or may not name it, since a record that was written
+  but not synced can still be read. A waiter that times out gets `Error::Locked` naming the holder only while that
   process is alive; nothing decides ownership from the record.
 - Every acquire opens the file again, so a second thread of one process waits like another
   process. The same thread asking for a lock it holds gets `Error::Reentrant` at once.

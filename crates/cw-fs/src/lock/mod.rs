@@ -32,8 +32,9 @@
 //! - **The record fails open.** It only explains a timeout to the next
 //!   waiter, so a lock whose record cannot be written or synced is still
 //!   acquired; the failure is kept on the [`Lock`] for the caller to warn
-//!   about ([`Lock::holder_error`]), and a waiter that times out meanwhile
-//!   names no holder.
+//!   about ([`Lock::holder_error`]). Naming the holder is then best effort:
+//!   a waiter that times out may or may not name it, since a record that was
+//!   written but not synced can still be read.
 //! - **The lock file must be private.** On every platform a symbolic link at
 //!   its path is refused. On Unix it must also be owned by this user, open
 //!   to no group or other permission bit, and have one hard link, so the
@@ -97,7 +98,8 @@ impl Lock {
     ///
     /// Writing the holder record is not among them: once the lock is taken,
     /// a record that cannot be written or synced leaves the lock acquired,
-    /// and the failure is returned by [`Lock::holder_error`].
+    /// and the failure is returned by [`Lock::holder_error`]. A waiter that
+    /// times out meanwhile may or may not name this holder.
     pub fn acquire(path: &Path, label: &str, wait: Duration) -> Result<Self> {
         let file = open_regular(path, Access::Lock, "open lock file")?;
         let meta = file.metadata().map_err(|e| Error::io("inspect", path, e))?;
@@ -129,8 +131,10 @@ impl Lock {
 
     /// Why the holder record could not be written when this lock was taken,
     /// or `None` when it was. Diagnostic only: the lock is held either way.
-    /// A caller may warn with it; nothing should decide from it. While it is
-    /// `Some`, a waiter that times out names no holder.
+    /// A caller may warn with it; nothing should decide from it. It is best
+    /// effort: while it is `Some`, a waiter that times out may or may not name
+    /// this holder. A failed write leaves no record to read, but a failed sync
+    /// can leave a complete one that is still readable.
     #[must_use]
     pub fn holder_error(&self) -> Option<&Error> {
         self.holder_error.as_ref()
