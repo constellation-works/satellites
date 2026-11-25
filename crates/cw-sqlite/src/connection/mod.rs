@@ -32,12 +32,15 @@
 //! - **Readers** open read-only and `query_only`, write no row, and never
 //!   checkpoint on close. A reader holds one read transaction, opened by
 //!   its version check, so all it reads is from the version it checked,
-//!   until the caller ends that transaction. It holds no lock that blocks a
-//!   writer, with one brief exception: on the first attach in a process to
-//!   a WAL whose index is not initialised (after the last connection
-//!   closed, say), SQLite's own recovery may take its recovery and write
-//!   locks, even for a reader, and a writer meeting that waits within the
-//!   lock wait. SQLite maps a database's `-shm` index once per process, so
+//!   until the caller ends that transaction. A database at version 0 with
+//!   nothing in it, as a first writer's is until its first migration step
+//!   commits, is reported missing, like an absent file. A reader holds no
+//!   lock that blocks a writer, with one brief exception: on the first
+//!   attach in a process to a WAL whose index is not initialised (after the
+//!   last connection closed, say), SQLite's own recovery may take its
+//!   recovery and write locks, even for a reader, and a writer meeting that
+//!   waits within the lock wait. SQLite maps a database's `-shm` index
+//!   once per process, so
 //!   a reader opens it the way a writer in this process needs it, by the
 //!   directory. In a directory this process can write, the reader shares
 //!   the index: SQLite may rebuild the `-shm`, its index rather than

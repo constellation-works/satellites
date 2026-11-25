@@ -68,10 +68,31 @@ impl Deref for Reader {
     }
 }
 
-/// A [`Reader`] on the database at `path`, refused when it is missing or a
-/// newer build migrated it.
+/// A [`Reader`] on the database at `path`, refused when it is missing, holds
+/// nothing yet, or a newer build migrated it.
+///
+/// A first writer creates the file before its first migration step
+/// commits, so until then the file exists at version 0 with nothing in it.
+/// A reader that finds that, in its own snapshot, reports
+/// [`Error::Missing`], as for a file that is absent: nothing has been
+/// written to it. The check runs inside the reader's read transaction, so
+/// it sees the same snapshot as the version check and every later read.
 pub(crate) fn open(path: &Path, migrations: &[Step], deadline: Deadline) -> Result<Reader> {
-    open_resolved(path, &resolve(path)?, migrations, deadline)
+    let reader = open_resolved(path, &resolve(path)?, migrations, deadline)?;
+    if reader.version == 0
+        && holds_nothing(&reader.conn).map_err(|e| Error::sqlite("read the schema of", path, e))?
+    {
+        return Err(Error::Missing {
+            path: path.to_path_buf(),
+        });
+    }
+    Ok(reader)
+}
+
+/// Whether the database on `conn` has no table, index, view or trigger.
+fn holds_nothing(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.prepare_cached("SELECT NOT EXISTS (SELECT 1 FROM sqlite_schema)")?
+        .query_row([], |row| row.get(0))
 }
 
 /// [`open`] on `real`, the already resolved `path`.
