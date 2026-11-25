@@ -67,11 +67,13 @@ impl TempRoot {
                 prefix: prefix.to_owned(),
             });
         }
-        let parent = std::env::temp_dir();
+        // One resolved parent for both the check and the creation, so the
+        // root is made exactly where it was checked.
+        let parent = temp_parent()?;
         refuse_replaceable_parent(&parent)?;
         let dir = private_dir_builder()
             .prefix("cw-testkit.")
-            .tempdir()
+            .tempdir_in(&parent)
             .map_err(|source| Error::Io {
                 action: "create the temp root",
                 path: parent,
@@ -238,6 +240,21 @@ fn create_private_dir(path: &Path) -> Result<(), Error> {
         source,
     })?;
     set_private(path)
+}
+
+/// The system temporary directory, made absolute: a relative one (an empty
+/// `TMPDIR`, say) is taken from the current directory, as `tempfile` would.
+fn temp_parent() -> Result<PathBuf, Error> {
+    let parent = std::env::temp_dir();
+    if parent.is_absolute() {
+        return Ok(parent);
+    }
+    let cwd = std::env::current_dir().map_err(|source| Error::Io {
+        action: "resolve the temporary directory against the current directory",
+        path: parent.clone(),
+        source,
+    })?;
+    Ok(cwd.join(parent))
 }
 
 /// Refuse a temporary parent in which another user could replace the root:
