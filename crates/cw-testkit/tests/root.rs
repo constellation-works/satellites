@@ -192,19 +192,24 @@ fn the_kit_directories_are_owner_only_under_a_restrictive_umask() {
 
     let name = "the_kit_directories_are_owner_only_under_a_restrictive_umask";
     let Some(fixture) = rerun_fixture() else {
+        // 0277 leaves a new root 0500 and 0477 leaves it 0300 (writable
+        // but not readable), so each needs the explicit mode change.
         let outer = TempRoot::new("CWTEST").expect("create temp root");
-        rerun(
-            &outer,
-            name,
-            &outer.elsewhere("tmp"),
-            r#"umask 0277 && exec "$0" "$@""#,
-            "umask 0277".as_ref(),
-        );
+        for umask in ["0277", "0477"] {
+            rerun(
+                &outer,
+                name,
+                &outer.elsewhere(format!("tmp-{umask}")),
+                &format!(r#"umask {umask} && exec "$0" "$@""#),
+                umask.as_ref(),
+            );
+        }
         return;
     };
     // The child got the fixture: a directory it asks to be 0777 comes out
-    // 0500, so the umask in force is 0277.
-    assert_eq!(fixture, "umask 0277");
+    // with the umask's bits cleared, so that umask is in force.
+    let umask =
+        u32::from_str_radix(fixture.to_str().expect("utf-8 fixture"), 8).expect("an octal umask");
     let probe = std::env::temp_dir().join("umask-probe");
     {
         use std::os::unix::fs::DirBuilderExt;
@@ -219,10 +224,61 @@ fn the_kit_directories_are_owner_only_under_a_restrictive_umask() {
         .mode()
         & 0o777;
     std::fs::remove_dir(&probe).expect("remove the umask probe");
-    assert_eq!(probed, 0o500, "the child's umask leaves {probed:o}");
-    let root = TempRoot::new("CWTEST").expect("create temp root under umask 0277");
+    assert_eq!(
+        probed,
+        0o777 & !umask,
+        "the child's umask leaves {probed:o}"
+    );
+    let root = TempRoot::new("CWTEST").expect("create temp root under the umask");
     for dir in [root.path().to_path_buf(), root.home(), root.bin()] {
         let mode = std::fs::metadata(&dir).expect("stat").permissions().mode() & 0o777;
-        assert_eq!(mode, 0o700, "{} mode is {mode:o}", dir.display());
+        assert_eq!(
+            mode,
+            0o700,
+            "{} mode is {mode:o} under umask {umask:o}",
+            dir.display()
+        );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_temp_parent_others_could_replace_entries_in_is_refused() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let name = "a_temp_parent_others_could_replace_entries_in_is_refused";
+    let Some(fixture) = rerun_fixture() else {
+        let outer = TempRoot::new("CWTEST").expect("create temp root");
+        let open = outer.elsewhere("open");
+        std::fs::create_dir_all(&open).expect("create the open parent");
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777))
+            .expect("make the parent 0777 without the sticky bit");
+        rerun(&outer, name, &open, r#"exec "$0" "$@""#, open.as_os_str());
+        return;
+    };
+    // The child got the fixture: its temporary directory is the 0777 one
+    // without the sticky bit.
+    let parent = std::env::temp_dir();
+    assert_eq!(
+        parent.as_os_str(),
+        fixture,
+        "the child's temporary directory"
+    );
+    let mode = std::fs::metadata(&parent)
+        .expect("stat")
+        .permissions()
+        .mode()
+        & 0o7777;
+    assert_eq!(mode, 0o777, "the parent's mode");
+    let err = TempRoot::new("CWTEST").expect_err("a replaceable parent must be refused");
+    let cw_testkit::Error::ReplaceableTempParent { path } = &err else {
+        panic!("unexpected error: {err:?}");
+    };
+    assert_eq!(path, &parent);
+    assert!(
+        err.to_string().contains(&parent.display().to_string()),
+        "the message names the parent: {err}"
+    );
+    let entries = std::fs::read_dir(&parent).expect("list the parent").count();
+    assert_eq!(entries, 0, "nothing was created in the refused parent");
 }
