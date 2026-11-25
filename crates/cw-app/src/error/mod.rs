@@ -15,7 +15,10 @@ use std::path::PathBuf;
 pub enum Error {
     /// Nothing named a data directory: no explicit root, no root variable
     /// and no `HOME`.
-    #[error("no data directory: pass a root explicitly or set {root_var} (HOME is not set either)")]
+    #[error(
+        "no data directory: pass a root explicitly or set {root_var} ({home} is not set either)",
+        home = crate::env::HOME.name_for("")
+    )]
     NoDataDir {
         /// The variable that would have named it, such as `NOTES_ROOT`.
         root_var: String,

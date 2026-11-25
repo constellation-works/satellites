@@ -2,6 +2,8 @@
 //! directory.
 
 use super::Env;
+use super::kit::{FORMAT, LOG, ROOT};
+use super::var::{EnvVar, VarName, prefix};
 use crate::error::{Error, Result};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -21,16 +23,7 @@ pub struct AppEnv<'a> {
 
 impl<'a> AppEnv<'a> {
     pub(super) fn new(env: &'a Env, name: &'a str) -> Self {
-        let prefix = name
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() {
-                    c.to_ascii_uppercase()
-                } else {
-                    '_'
-                }
-            })
-            .collect();
+        let prefix = prefix(name);
         Self { env, name, prefix }
     }
 
@@ -53,22 +46,32 @@ impl<'a> AppEnv<'a> {
         self.env.var(&self.var_name(suffix))
     }
 
+    /// The value of the declared variable `var`, a program's own or the
+    /// kit's, or `None` when it is unset or empty.
+    #[must_use]
+    pub fn get(&self, var: &EnvVar) -> Option<&'a OsStr> {
+        match var.name() {
+            VarName::Global(name) => self.env.var(name),
+            VarName::App(suffix) => self.var(suffix),
+        }
+    }
+
     /// `<APP>_ROOT`, the data directory the environment names.
     #[must_use]
     pub fn root(&self) -> Option<&'a OsStr> {
-        self.var("ROOT")
+        self.get(&ROOT)
     }
 
     /// `<APP>_FORMAT`, the output format the environment asks for.
     #[must_use]
     pub fn format(&self) -> Option<&'a OsStr> {
-        self.var("FORMAT")
+        self.get(&FORMAT)
     }
 
     /// `<APP>_LOG`, the log filter the environment asks for.
     #[must_use]
     pub fn log(&self) -> Option<&'a OsStr> {
-        self.var("LOG")
+        self.get(&LOG)
     }
 
     /// The data directory: `explicit` (a `--root` flag) when given, else
@@ -90,7 +93,7 @@ impl<'a> AppEnv<'a> {
             .home()
             .map(|home| home.join(format!(".{}", self.name)))
             .ok_or_else(|| Error::NoDataDir {
-                root_var: self.var_name("ROOT"),
+                root_var: ROOT.name_for(self.name),
             })
     }
 }

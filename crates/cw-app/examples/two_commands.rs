@@ -4,11 +4,17 @@
 //! Run with `cargo run -p cw-app --example two_commands`. It works in a
 //! temporary directory and removes it on exit.
 
+use cw_app::env::{EnvVar, table};
 use cw_app::{App, AuditMeta, Ctx, Env, Origin, Runtime, Surface, exec};
 use cw_base::{Error, Kind};
 use cw_fs::Cap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+
+/// The one variable this program reads beyond the kit's: declared once,
+/// read through the declaration, and listed in the usage table.
+const START: EnvVar =
+    EnvVar::app("START", "The tally a fresh data directory starts from.").with_default("`0`");
 
 /// What the program built at start: where its tally lives.
 struct State {
@@ -79,12 +85,34 @@ fn read_tally(path: &Path) -> Result<u64, TallyError> {
     Ok(String::from_utf8_lossy(&bytes).trim().parse().unwrap_or(0))
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let scratch = tempfile::tempdir()?;
+/// The tally to start from: `None` when the variable is unset, an error
+/// naming it when it is set to anything but a whole number.
+fn start_from(env: &Env) -> Result<Option<u64>, String> {
+    let app = env.app("tally");
+    let Some(value) = app.get(&START) else {
+        return Ok(None);
+    };
+    value
+        .to_str()
+        .and_then(|text| text.parse::<u64>().ok())
+        .map(Some)
+        .ok_or_else(|| {
+            format!(
+                "{} must be a whole number, not {value:?}",
+                START.name_for(app.name())
+            )
+        })
+}
 
-    // main reads the environment once; the data directory is a pure
-    // function of that value (here an explicit root, as `--root` would be).
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // main reads the environment once, and refuses a value it cannot use
+    // before it creates anything or prints anything.
     let env = Env::capture();
+    let start = start_from(&env)?;
+
+    // The data directory is a pure function of the captured value (here an
+    // explicit root, as `--root` would be).
+    let scratch = tempfile::tempdir()?;
     let root = env
         .app("tally")
         .data_dir(Some(&scratch.path().join("data")))?;
@@ -99,6 +127,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let origin = Origin::new(Surface::CLI, env.user().map(str::to_owned));
 
     let mut out = std::io::stdout().lock();
+    writeln!(out, "{}", table("tally", &[START]))?;
+
+    // A fresh data directory starts from TALLY_START when it is set.
+    if let Some(start) = start {
+        cw_fs::write_atomic(&runtime.state().tally, start.to_string().as_bytes())?;
+    }
+
     for command in [
         Command::Add(2),
         Command::Add(0),

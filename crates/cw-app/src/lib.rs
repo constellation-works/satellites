@@ -8,7 +8,9 @@
 //!   [`cw_base::Error`] once, and returns a [`Finished`] for the surface to
 //!   render and then settle.
 //! - [`env`](mod@env): [`Env::capture`], the only read of the process environment,
-//!   and the data directory resolved from it as a pure function.
+//!   the data directory resolved from it as a pure function, and the
+//!   declaration of every variable a program reads ([`EnvVar`]), rendered as
+//!   one usage table.
 //! - [`audit`]: the record a mutating command leaves in `<root>/audit.jsonl`,
 //!   its versioned line format, and a reader.
 //! - [`error`]: the typed [`Error`] this crate fails with.
@@ -67,6 +69,6 @@ pub mod error;
 pub mod exec;
 
 pub use audit::{AuditLog, AuditMeta, AuditWarning, Pending, Record, Status};
-pub use env::{AppEnv, Env};
+pub use env::{AppEnv, Env, EnvVar};
 pub use error::{Error, Result};
 pub use exec::{App, Ctx, Finished, Origin, Runtime, Surface, exec};
