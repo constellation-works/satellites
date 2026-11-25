@@ -19,29 +19,36 @@
 //!   `-wal` and `-shm` files are kept after the last connection closes
 //!   (`SQLITE_FCNTL_PERSIST_WAL`), so a read-only reader finds them. A
 //!   database a newer build migrated is refused, by a reader before the
-//!   read-write open and again under the write lock; the refusal writes
-//!   nothing of its own. (A refused connection that closes last may still
+//!   read-write open and again under the write lock; the refusal writes no
+//!   database content and changes no main file or `-wal` of its own, though
+//!   in a writable directory SQLite may rebuild the `-shm`, its index, as
+//!   any connection's first attach may. (A refused connection that closes last may still
 //!   checkpoint committed WAL pages into the main file, which changes
 //!   neither its content nor its version.) The database file is never
 //!   opened outside SQLite: closing such a descriptor would drop the POSIX
 //!   locks of every SQLite connection to it in this process.
-//! - **Readers** open read-only and `query_only`, take no lock that blocks
-//!   a writer, and write no row: closing one never checkpoints. A reader
-//!   holds one read transaction, opened by its version check, so all it
-//!   reads is from the version it checked, until the caller ends that
-//!   transaction. SQLite maps a database's `-shm` index once per process,
-//!   so a reader opens it the way a writer in this process needs it. Where
-//!   this process can write the index (the `-shm` is writable, or missing
-//!   in a writable directory), the reader shares it: it may update the
-//!   `-shm` in place, and SQLite creates a missing `-wal` (empty) and
-//!   `-shm`, owner-only like the database. Where it cannot, no writer in
-//!   this process could use the index either, and the reader opens it
-//!   read-only (`readonly_shm=1`) and writes nothing at all. When SQLite
-//!   cannot read the WAL that way, a reader in a directory this process
-//!   cannot write (a copy, a read-only mount) opens the main file with
-//!   `immutable=1` and says so, or is refused when the `-wal` has content;
-//!   in a writable directory the read is refused, since the main file alone
-//!   may lack a writer's committed pages.
+//! - **Readers** open read-only and `query_only`, write no row, and never
+//!   checkpoint on close. A reader holds one read transaction, opened by
+//!   its version check, so all it reads is from the version it checked,
+//!   until the caller ends that transaction. It holds no lock that blocks a
+//!   writer, with one brief exception: on the first attach in a process to
+//!   a WAL whose index is not initialised (after the last connection
+//!   closed, say), SQLite's own recovery may take its recovery and write
+//!   locks, even for a reader, and a writer meeting that waits within the
+//!   lock wait. SQLite maps a database's `-shm` index once per process, so
+//!   a reader opens it the way a writer in this process needs it, by the
+//!   directory. In a directory this process can write, the reader shares
+//!   the index: SQLite may rebuild the `-shm`, its index rather than
+//!   database content, and creates a missing `-wal` (empty) and `-shm`,
+//!   owner-only like the database. Where it cannot share a `-shm` this
+//!   process cannot write, which no writer here could use either, it opens
+//!   the index read-only (`readonly_shm=1`); SQLite may still create a
+//!   missing `-wal`, owner-only. In a directory this process cannot write
+//!   (a copy, a read-only mount), no file is opened writable: the index is
+//!   opened read-only, and when SQLite cannot read the WAL that way the
+//!   reader opens the main file with `immutable=1` and says so, or is
+//!   refused when the `-wal` has content. In a writable directory the main
+//!   file is never trusted alone.
 //! - **Pragmas** are set with plain SQL, not `rusqlite`'s helper, which reads
 //!   the schema first and so fails on a read-only directory.
 
