@@ -31,16 +31,20 @@ impl DuplexClient {
         deadline: Duration,
     ) -> Result<Self> {
         let (client, server_end) = tokio::io::duplex(BUFFER);
+        // Both runtimes start here, so a failure to start either is this
+        // call's error, not a closed connection on the first exchange.
+        let server_runtime = runtime()?;
+        let client_runtime = runtime()?;
         let (done, served) = mpsc::channel();
         thread::spawn(move || {
             let (input, output) = tokio::io::split(server_end);
-            let result = run(|| serve(server, input, output));
+            let result = run(server_runtime, || serve(server, input, output));
             // The client may be gone already; then nobody is waiting.
             let _ = done.send(result);
         });
         let (reader, writer) = tokio::io::split(client);
         Ok(Self {
-            runtime: runtime()?,
+            runtime: client_runtime,
             reader: BufReader::new(reader),
             writer,
             served,

@@ -29,18 +29,20 @@ pub(crate) const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 /// Serve `server` over standard input and output, blocking until the client
 /// closes its input.
 pub(crate) fn serve_stdio<S: Send + Sync + 'static>(server: Server<S>) -> Result<()> {
-    run(|| serve(server, tokio::io::stdin(), tokio::io::stdout()))
+    run(runtime()?, || {
+        serve(server, tokio::io::stdin(), tokio::io::stdout())
+    })
 }
 
-/// Run one session on a private runtime, then shut the runtime down within
+/// Run one session on `runtime`, a private runtime started by the caller
+/// (so a failure to start one reaches the caller first), then shut the runtime down within
 /// [`SHUTDOWN_GRACE`]: a tool function still running once the session has
 /// ended is abandoned on its blocking thread rather than waited for.
 /// Dropping the runtime instead would wait for it without bound.
-pub(crate) fn run<F>(session: impl FnOnce() -> F) -> Result<()>
+pub(crate) fn run<F>(runtime: tokio::runtime::Runtime, session: impl FnOnce() -> F) -> Result<()>
 where
     F: Future<Output = Result<()>>,
 {
-    let runtime = runtime()?;
     let result = runtime.block_on(session());
     runtime.shutdown_timeout(SHUTDOWN_GRACE);
     result
