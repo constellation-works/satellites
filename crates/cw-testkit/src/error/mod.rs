@@ -23,6 +23,19 @@ pub enum Error {
         prefix: String,
     },
 
+    /// The temp root's `bin/` path contains the `PATH` separator (`:` on
+    /// Unix, `;` on Windows), so putting it on a child's `PATH` would split
+    /// it into entries the kit did not choose. The path comes from the
+    /// system temporary directory (`TMPDIR` on Unix).
+    #[error(
+        "temp root bin path {} contains the PATH separator, which would split a child's PATH; point the temporary directory (TMPDIR) at a path without it",
+        path.display()
+    )]
+    PathSeparatorInRoot {
+        /// The `bin/` path refused.
+        path: PathBuf,
+    },
+
     /// A golden name is empty, absolute or leaves the goldens folder.
     #[error(
         "golden name {name:?} is not valid: it must be a relative path inside the goldens folder"

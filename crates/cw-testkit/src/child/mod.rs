@@ -4,6 +4,7 @@ use std::ffi::{OsStr, OsString};
 use std::process::Command;
 
 use crate::TempRoot;
+use crate::root::PATH_SEPARATOR;
 
 /// The system's standard program directories, after the temp root's `bin/`
 /// on a child's `PATH`, so a test can still run `sh`, `env` or `git`.
@@ -27,10 +28,9 @@ pub(crate) fn isolated(program: &OsStr, root: &TempRoot) -> Command {
 }
 
 fn path_value(root: &TempRoot) -> OsString {
-    let separator = if cfg!(windows) { ";" } else { ":" };
     let mut value = root.bin().into_os_string();
     for dir in SYSTEM_PATH {
-        value.push(separator);
+        value.push(PATH_SEPARATOR);
         value.push(dir);
     }
     value

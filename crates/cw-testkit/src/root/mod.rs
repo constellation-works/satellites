@@ -10,7 +10,9 @@ use crate::child;
 /// A private temporary directory for one test, removed on drop.
 ///
 /// The directory is created owner-only (`0700` on Unix) under the system
-/// temporary directory. It holds:
+/// temporary directory, and so are `home/` and `bin/`: the mode is set
+/// explicitly after each directory is made, so a restrictive umask cannot
+/// leave one narrower than `0700`. It holds:
 ///
 /// - `home/`: the `HOME` a child sees, created empty;
 /// - `bin/`: first on the `PATH` a child sees, created empty, for fake
@@ -40,8 +42,12 @@ impl TempRoot {
     /// # Errors
     ///
     /// [`Error::InvalidPrefix`] if `prefix` is not a capital letter followed
-    /// by capitals, digits or `_` (and not ending in `_`); [`Error::Io`] if a
-    /// directory cannot be created.
+    /// by capitals, digits or `_` (and not ending in `_`);
+    /// [`Error::PathSeparatorInRoot`] if the `bin/` path contains the
+    /// platform's `PATH` separator (`:` on Unix, `;` on Windows), which would
+    /// split a child's `PATH` (the system temporary directory, from `TMPDIR`
+    /// on Unix, decides that path); [`Error::Io`] if a directory cannot be
+    /// created or given its mode.
     pub fn new(prefix: &str) -> Result<Self, Error> {
         if !valid_prefix(prefix) {
             return Err(Error::InvalidPrefix {
@@ -56,6 +62,7 @@ impl TempRoot {
                 path: std::env::temp_dir(),
                 source,
             })?;
+        set_private(dir.path())?;
         // Canonical, because git compares its ceiling with the canonical
         // working directory (the system temporary directory may sit behind
         // a link, as /var does on macOS).
@@ -72,6 +79,12 @@ impl TempRoot {
             root_var: format!("{prefix}_ROOT"),
             git_ceiling,
         };
+        let bin = made.bin();
+        // Lossy is exact here: the separator is ASCII, and no replacement
+        // character is one.
+        if bin.to_string_lossy().contains(PATH_SEPARATOR) {
+            return Err(Error::PathSeparatorInRoot { path: bin });
+        }
         for sub in [made.home(), made.bin()] {
             create_private_dir(&sub)?;
         }
@@ -172,6 +185,9 @@ impl TempRoot {
     }
 }
 
+/// What separates `PATH` entries.
+pub(crate) const PATH_SEPARATOR: &str = if cfg!(windows) { ";" } else { ":" };
+
 /// `[A-Z][A-Z0-9_]*`, not ending in `_`.
 fn valid_prefix(prefix: &str) -> bool {
     let mut bytes = prefix.bytes();
@@ -205,5 +221,30 @@ fn create_private_dir(path: &Path) -> Result<(), Error> {
         action: "create",
         path: path.to_path_buf(),
         source,
-    })
+    })?;
+    set_private(path)
+}
+
+/// Set `path` to `0700` on Unix. The mode given at creation goes through the
+/// umask, so it alone can leave a directory narrower (`0500` under
+/// `umask 0277`, which also stops the kit creating anything inside).
+#[cfg_attr(
+    not(unix),
+    allow(clippy::unnecessary_wraps, reason = "modes are Unix-only")
+)]
+fn set_private(path: &Path) -> Result<(), Error> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).map_err(
+            |source| Error::Io {
+                action: "set the mode of",
+                path: path.to_path_buf(),
+                source,
+            },
+        )?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
 }
