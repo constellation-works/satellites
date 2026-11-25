@@ -93,7 +93,8 @@ fn drain(pipe: impl std::io::Read + Send + 'static) -> std::thread::JoinHandle<S
     })
 }
 
-/// Rerun the test `name` in a kit child with `TMPDIR` at `tmpdir` and
+/// Rerun the test `name` in a kit child, in `cwd` if given, with `TMPDIR`
+/// at `tmpdir` (created unless empty) and
 /// [`RERUN`] at `fixture`, through `sh -c <script>` so the script can change
 /// the child's process state first, and require that it passed within
 /// [`CHILD_DEADLINE`]. The kit command starts from a cleared environment, so
@@ -105,13 +106,19 @@ fn rerun(
     tmpdir: &std::path::Path,
     script: &str,
     fixture: &std::ffi::OsStr,
+    cwd: Option<&std::path::Path>,
 ) {
     use std::process::Stdio;
 
-    std::fs::create_dir_all(tmpdir).expect("create the child's TMPDIR");
+    if !tmpdir.as_os_str().is_empty() {
+        std::fs::create_dir_all(tmpdir).expect("create the child's TMPDIR");
+    }
+    let mut command = outer.command("sh");
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
     let mut child = Reaped(
-        outer
-            .command("sh")
+        command
             .args(["-c", script])
             .arg(std::env::current_exe().expect("test binary"))
             .args(["--exact", name, CHILD_ARG, "--test-threads", "1"])
@@ -158,6 +165,7 @@ fn a_temp_root_whose_bin_path_would_split_path_is_refused() {
             &tmpdir,
             r#"exec "$0" "$@""#,
             tmpdir.as_os_str(),
+            None,
         );
         return;
     };
@@ -202,6 +210,7 @@ fn the_kit_directories_are_owner_only_under_a_restrictive_umask() {
                 &outer.elsewhere(format!("tmp-{umask}")),
                 &format!(r#"umask {umask} && exec "$0" "$@""#),
                 umask.as_ref(),
+                None,
             );
         }
         return;
@@ -253,23 +262,79 @@ fn a_temp_parent_others_could_replace_entries_in_is_refused() {
         std::fs::create_dir_all(&open).expect("create the open parent");
         std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777))
             .expect("make the parent 0777 without the sticky bit");
-        rerun(&outer, name, &open, r#"exec "$0" "$@""#, open.as_os_str());
+        let script = r#"exec "$0" "$@""#;
+        let fixture = |case: &str| {
+            let mut value = std::ffi::OsString::from(format!("{case} "));
+            value.push(&open);
+            value
+        };
+        // TMPDIR names the open directory.
+        rerun(&outer, name, &open, script, &fixture("named"), None);
+        // An empty TMPDIR, run in the open directory: the check applies to
+        // the current directory it resolves to.
+        rerun(
+            &outer,
+            name,
+            std::path::Path::new(""),
+            script,
+            &fixture("empty"),
+            Some(&open),
+        );
+        // TMPDIR is private, and tempfile's own default is overridden to the
+        // open directory: the root is made where the check looked.
+        rerun(
+            &outer,
+            name,
+            &outer.elsewhere("private"),
+            script,
+            &fixture("override"),
+            None,
+        );
         return;
     };
-    // The child got the fixture: its temporary directory is the 0777 one
-    // without the sticky bit.
-    let parent = std::env::temp_dir();
+    let fixture = fixture.to_str().expect("utf-8 fixture");
+    let (case, open) = fixture.split_once(' ').expect("case and path");
+    let open = std::path::Path::new(open);
+    let mode = std::fs::metadata(open).expect("stat").permissions().mode() & 0o7777;
+    assert_eq!(mode, 0o777, "the open directory's mode");
+    let canonical = |p: &std::path::Path| p.canonicalize().expect("canonical path");
+    let parent = match case {
+        "named" => std::env::temp_dir(),
+        "empty" => {
+            assert_eq!(std::env::temp_dir().as_os_str(), "", "TMPDIR is empty");
+            let cwd = std::env::current_dir().expect("current directory");
+            assert_eq!(
+                canonical(&cwd),
+                canonical(open),
+                "run in the open directory"
+            );
+            cwd
+        }
+        "override" => {
+            tempfile::env::override_temp_dir(open).expect("override tempfile's default");
+            let parent = std::env::temp_dir();
+            assert_ne!(
+                canonical(&parent),
+                canonical(open),
+                "TMPDIR is not the open one"
+            );
+            let root = TempRoot::new("CWTEST").expect("a private TMPDIR is accepted");
+            assert_eq!(
+                root.path().parent(),
+                Some(parent.as_path()),
+                "made in TMPDIR"
+            );
+            let entries = std::fs::read_dir(open).expect("list the open dir").count();
+            assert_eq!(entries, 0, "nothing was made in the override");
+            return;
+        }
+        other => panic!("unknown case {other}"),
+    };
     assert_eq!(
-        parent.as_os_str(),
-        fixture,
+        canonical(&parent),
+        canonical(open),
         "the child's temporary directory"
     );
-    let mode = std::fs::metadata(&parent)
-        .expect("stat")
-        .permissions()
-        .mode()
-        & 0o7777;
-    assert_eq!(mode, 0o777, "the parent's mode");
     let err = TempRoot::new("CWTEST").expect_err("a replaceable parent must be refused");
     let cw_testkit::Error::ReplaceableTempParent { path } = &err else {
         panic!("unexpected error: {err:?}");
