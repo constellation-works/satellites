@@ -14,12 +14,19 @@ use crate::child;
 /// explicitly after each directory is made, so a restrictive umask cannot
 /// leave one narrower than `0700`.
 ///
-/// On Unix the system temporary directory must be one no other user can
+/// On Unix the system temporary directory (resolved once, against the
+/// current directory if it is relative) must be one no other user can
 /// replace entries in: private to its owner (not writable by group or
-/// other) or sticky (`/tmp`'s `1777`). Otherwise another user could swap
-/// the new root for something of their own between its creation and its
-/// mode change, so [`new`](Self::new) refuses it. Once the root is `0700`,
-/// nobody else can replace the directories the kit makes inside it.
+/// other), or sticky (`/tmp`'s `1777`) and owned by root or the current
+/// user, since a sticky directory's owner may still remove any entry.
+/// Otherwise another user could swap the new root for something of their
+/// own between its creation and its mode change, so [`new`](Self::new)
+/// refuses it. Once the root is `0700`, nobody else can replace the
+/// directories the kit makes inside it.
+///
+/// The threat model stops at that directory: the kit assumes its ancestors
+/// are not writable by other users. Replacing an ancestor, or a link in
+/// the temporary directory's path, is not defended against.
 ///
 /// It holds:
 ///
