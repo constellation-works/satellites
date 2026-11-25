@@ -4,6 +4,14 @@ use std::path::PathBuf;
 
 use crate::golden::UPDATE_VAR;
 
+/// The variables the system temporary directory is read from, as the
+/// refusal of a root that would split `PATH` names them.
+const TEMP_DIR_VARS: &str = if cfg!(windows) {
+    "TMP or TEMP"
+} else {
+    "TMPDIR"
+};
+
 /// Why a temp root could not be made or a golden did not hold.
 ///
 /// A golden mismatch is an error, not a panic, so a test can check every
@@ -26,9 +34,11 @@ pub enum Error {
     /// The temp root's `bin/` path contains the `PATH` separator (`:` on
     /// Unix, `;` on Windows), so putting it on a child's `PATH` would split
     /// it into entries the kit did not choose. The path comes from the
-    /// system temporary directory (`TMPDIR` on Unix).
+    /// system temporary directory, which [`std::env::temp_dir`] reads from
+    /// `TMPDIR` on Unix and `TMP` or `TEMP` on Windows; the message names the
+    /// variable for the platform.
     #[error(
-        "temp root bin path {} contains the PATH separator, which would split a child's PATH; point the temporary directory (TMPDIR) at a path without it",
+        "temp root bin path {} contains the PATH separator, which would split a child's PATH; point the temporary directory ({TEMP_DIR_VARS}) at a path without it",
         path.display()
     )]
     PathSeparatorInRoot {

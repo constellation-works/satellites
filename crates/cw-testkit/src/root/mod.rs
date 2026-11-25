@@ -47,7 +47,7 @@ impl TempRoot {
     /// [`Error::PathSeparatorInRoot`] if the `bin/` path contains the
     /// platform's `PATH` separator (`:` on Unix, `;` on Windows), which would
     /// split a child's `PATH` (the system temporary directory, from `TMPDIR`
-    /// on Unix, decides that path); [`Error::Io`] if a directory cannot be
+    /// on Unix and `TMP` or `TEMP` on Windows, decides that path); [`Error::Io`] if a directory cannot be
     /// created or given its mode.
     pub fn new(prefix: &str) -> Result<Self, Error> {
         if !valid_prefix(prefix) {
