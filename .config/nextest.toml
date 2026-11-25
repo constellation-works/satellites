@@ -30,3 +30,10 @@ slow-timeout = { period = "15s", terminate-after = 2 }
 filter = "package(cw-app) & binary(busy)"
 threads-required = "num-test-threads"
 slow-timeout = { period = "15s", terminate-after = 2 }
+
+# cw-mcp's stdio and shutdown tests hold a child process or a bounded
+# shutdown to wall-clock deadlines; the same rule.
+[[profile.default.overrides]]
+filter = "package(cw-mcp) & (binary(stdio) | binary(shutdown))"
+threads-required = "num-test-threads"
+slow-timeout = { period = "30s", terminate-after = 2 }
