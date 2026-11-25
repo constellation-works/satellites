@@ -62,9 +62,10 @@ cw_mcp::serve_stdio(ServerInfo::new("notes", "0.1.0", "notes_internal"), runtime
   input schema, including arguments that are not an object or are an explicit `null`) is a JSON-RPC error `-32602`
   with the request's id, and no tool runs.
 - **Framing is the protocol SDK's** (`rmcp`), including where it departs from JSON-RPC 2.0:
-  a line that is not complete JSON is ignored rather than answered with `-32700`, and a
-  well-formed object that is not a request is answered `-32600` without an `id` rather than
-  with `"id": null`. A client that writes whole JSON-RPC lines never meets either.
+  a line that is not complete JSON is ignored rather than answered with `-32700`, and valid
+  JSON whose shape the SDK rejects as a JSON-RPC message (neither a request, a
+  notification nor a response) is answered `-32600` without an `id` rather than with
+  `"id": null`. A client that writes whole, well-formed JSON-RPC lines never meets either.
 - **Closing standard input** ends the session: `serve_stdio` returns `Ok(())`, also when the
   client leaves before the handshake. The protocol SDK reports a failure to read the input
   the same way, so it also ends with `Ok(())`; `Error::Connection` means the handshake
