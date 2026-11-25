@@ -123,11 +123,14 @@ impl Db {
         Ok(value)
     }
 
-    /// A new read-only connection. It takes no lock and writes nothing of
-    /// its own; it sees the last committed state, even while a write is in
-    /// progress. In a writable directory whose `-wal` or `-shm` is missing,
-    /// SQLite creates them, owner-only; see [`crate::Reader::immutable`] for
-    /// a directory this process cannot write.
+    /// A new read-only connection. It writes no row, and blocks no writer,
+    /// in this process or another, beyond SQLite's brief recovery on the
+    /// first attach to an uninitialised index; it sees the last committed
+    /// state, even while a write is in progress. In a directory this process
+    /// can write, it shares the `-shm` index, which SQLite may rebuild, and
+    /// SQLite creates a missing `-wal` or `-shm`, owner-only; in one it
+    /// cannot write, it writes nothing. See
+    /// [`crate::Reader::immutable`] for that case.
     ///
     /// # Errors
     ///

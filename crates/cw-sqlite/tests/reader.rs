@@ -1,6 +1,7 @@
-//! The reader through the public API, on temporary roots: it creates and
-//! changes no file, refuses a write, and reads a copy with no WAL through
-//! `immutable=1`.
+//! The reader through the public API, on temporary roots: it creates no
+//! file and changes none but a shared index, leaves a writer in the same
+//! process unaffected, refuses a write, and reads a copy with no WAL
+//! through `immutable=1`.
 
 #![cfg(unix)]
 
@@ -54,11 +55,45 @@ fn read_creates_and_changes_no_file() -> TestResult {
     assert_eq!(snapshot(root.path())?, vec![]);
 
     insert(&db, 1)?;
+    // A shared index: the reader may update the `-shm` in place, and
+    // nothing else.
+    let before = snapshot(root.path())?;
+    let reader = db.read()?;
+    assert_eq!(count(&reader)?, 1);
+    drop(reader);
+    let after = snapshot(root.path())?;
+    assert_eq!(after.len(), before.len(), "{after:?}");
+    for (was, is) in before.iter().zip(&after) {
+        if was.0.ends_with("-shm") {
+            assert_eq!((&was.0, was.1), (&is.0, is.1));
+        } else {
+            assert_eq!(was, is);
+        }
+    }
+
+    // An index this process cannot write is opened read-only: nothing changes.
+    let shm = root.path().join("store.db-shm");
+    std::fs::set_permissions(&shm, std::fs::Permissions::from_mode(0o400))?;
     let before = snapshot(root.path())?;
     let reader = db.read()?;
     assert_eq!(count(&reader)?, 1);
     drop(reader);
     assert_eq!(snapshot(root.path())?, before);
+    Ok(())
+}
+
+#[test]
+fn a_write_commits_while_a_reader_in_the_same_process_is_alive() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let db = Db::new(root.path().join("store.db"), MIGRATIONS);
+    insert(&db, 1)?;
+    let reader = db.read()?;
+
+    insert(&db, 2)?;
+
+    assert_eq!(count(&reader)?, 1, "the reader keeps its snapshot");
+    drop(reader);
+    assert_eq!(count(&db.read()?)?, 2);
     Ok(())
 }
 

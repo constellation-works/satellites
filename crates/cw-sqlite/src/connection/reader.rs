@@ -5,6 +5,7 @@ use super::{get_pragma, inspect, resolve, set_pragma};
 use crate::error::{Error, Result, is_wal_unreadable};
 use crate::migration;
 use crate::migration::Step;
+use rusqlite::config::DbConfig;
 use rusqlite::{Connection, OpenFlags};
 use std::ops::Deref;
 use std::path::Path;
@@ -75,17 +76,26 @@ pub(crate) fn open(path: &Path, migrations: &[Step], wait: Duration) -> Result<R
 
 /// [`open`] on `real`, the already resolved `path`.
 ///
-/// It writes nothing of its own: the `-shm` index is opened read-only. When
-/// SQLite cannot read the WAL that way (the `-shm` or the `-wal` is
-/// missing), what follows depends on the directory:
+/// SQLite keeps one mapping of a database's `-shm` index per process, made
+/// by the first connection that opens it and shared by every later one. So
+/// how a reader opens the index decides it for a writer in this process,
+/// and the directory decides how:
 ///
-/// - **Not writable:** no writer can exist there, so the main file is a
-///   static copy. With nothing in the `-wal`, it is the whole database and
+/// - **Writable:** a writer may exist, here or in another process. The
+///   reader shares the index, so a writer in this process finds it
+///   writable whichever connection opened it first; SQLite creates a
+///   missing `-wal` (empty) and `-shm`, owner-only like the database, and
+///   may rebuild the `-shm`, which is its index, not database content.
+///   Where it cannot share it (a `-shm` this process cannot write, which no
+///   writer here could use either), the reader opens it read-only
+///   (`readonly_shm=1`) instead, and SQLite may still create a missing
+///   `-wal`, owner-only. The main file is never trusted alone.
+/// - **Not writable:** the reader writes nothing there. The index is
+///   opened read-only; when SQLite cannot read the WAL that way (the `-shm`
+///   or the `-wal` is missing), no writer can exist, so the main file is a
+///   static copy. With nothing in the `-wal` it is the whole database and
 ///   is opened `immutable=1`, and the reader says so; with WAL content the
 ///   main file may lack committed pages, and the read is refused.
-/// - **Writable:** a writer may exist, so the main file is never trusted
-///   alone. The reader opens again with a shared `-shm`, and SQLite creates
-///   the missing `-wal` (empty) and `-shm`, owner-only like the database.
 pub(crate) fn open_resolved(
     path: &Path,
     real: &Path,
@@ -97,18 +107,22 @@ pub(crate) fn open_resolved(
             path: path.to_path_buf(),
         });
     }
-    match open_as(path, real, migrations, wait, Open::ReadOnlyIndex) {
+    let open = |how| open_as(path, real, migrations, wait, how);
+    let fail = |attempt: Attempt| attempt.into_error(path);
+    if directory_writable(real)? {
+        return match open(Open::SharedIndex) {
+            Err(Attempt::WalUnreadable(_)) => open(Open::ReadOnlyIndex).map_err(fail),
+            result => result.map_err(fail),
+        };
+    }
+    match open(Open::ReadOnlyIndex) {
         Err(Attempt::WalUnreadable(e)) => {
-            let next = if directory_writable(real)? {
-                Open::SharedIndex
-            } else if wal_has_content(real)? {
+            if wal_has_content(real)? {
                 return Err(Error::sqlite("read the write-ahead log of", path, e));
-            } else {
-                Open::Immutable
-            };
-            open_as(path, real, migrations, wait, next).map_err(|attempt| attempt.into_error(path))
+            }
+            open(Open::Immutable).map_err(fail)
         }
-        result => result.map_err(|attempt| attempt.into_error(path)),
+        result => result.map_err(fail),
     }
 }
 
@@ -149,10 +163,11 @@ fn open_as(
     how: Open,
 ) -> Result<Reader, Attempt> {
     let immutable = how == Open::Immutable;
-    let first = how == Open::ReadOnlyIndex;
+    // Only the main file alone has no fallback; see `open_resolved`.
+    let may_fall_back = how != Open::Immutable;
     let sqlite = |action| {
         move |e: rusqlite::Error| {
-            if first && is_wal_unreadable(&e) {
+            if may_fall_back && is_wal_unreadable(&e) {
                 Attempt::WalUnreadable(e)
             } else {
                 Attempt::Failed(Error::sqlite(action, path, e))
@@ -173,6 +188,11 @@ fn open_as(
             | OpenFlags::SQLITE_OPEN_NOFOLLOW,
     )
     .map_err(sqlite("open"))?;
+    // A reader that closes last must not try to checkpoint: that would take
+    // the database's exclusive lock, and a read-only connection could not
+    // write the pages anyway.
+    conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)
+        .map_err(sqlite("configure"))?;
     set_pragma(&conn, "busy_timeout", super::writer::millis(wait)).map_err(sqlite("configure"))?;
     set_pragma(&conn, "query_only", "ON").map_err(sqlite("configure"))?;
     // One read transaction for the reader's life: the version checked below

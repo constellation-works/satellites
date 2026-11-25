@@ -103,10 +103,11 @@ pub(crate) fn wal_has_content(path: &Path) -> Result<bool> {
     }
 }
 
-/// Whether this process may create files in the database's directory. When
-/// it may not, no writer can exist there either (it would need to create
-/// the `-wal` and `-shm`), so the main file is static: a copy, or a
-/// database on a read-only mount.
+/// Whether this process, with its effective credentials, may create files
+/// in the database's directory. When it may not, the reader writes nothing
+/// there, and when the WAL cannot be read, no writer can exist
+/// there either (it would need to create the `-wal` or `-shm`), so the main
+/// file is static: a copy, or a database on a read-only mount.
 pub(crate) fn directory_writable(path: &Path) -> Result<bool> {
     let dir = match path.parent() {
         Some(dir) if !dir.as_os_str().is_empty() => dir,
@@ -123,7 +124,14 @@ pub(crate) fn directory_writable(path: &Path) -> Result<bool> {
 
 #[cfg(unix)]
 fn writable(dir: &Path) -> io::Result<bool> {
-    match rustix::fs::access(dir, rustix::fs::Access::WRITE_OK) {
+    // The effective credentials, as SQLite opens with and as `cw-fs` checks
+    // ownership with; plain `access` would ask about the real ones.
+    match rustix::fs::accessat(
+        rustix::fs::CWD,
+        dir,
+        rustix::fs::Access::WRITE_OK,
+        rustix::fs::AtFlags::EACCESS,
+    ) {
         Ok(()) => Ok(true),
         Err(e) if e == rustix::io::Errno::ACCESS || e == rustix::io::Errno::ROFS => Ok(false),
         Err(e) => Err(e.into()),
