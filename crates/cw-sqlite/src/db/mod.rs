@@ -156,7 +156,9 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// [`Error::Missing`] when the database does not exist yet;
+    /// [`Error::Missing`] when the database does not exist yet, or holds
+    /// nothing yet (a first writer has created it and not yet committed its
+    /// first migration step);
     /// [`Error::Incompatible`] when a newer build migrated it;
     /// [`Error::File`] when a file is refused; [`Error::Corrupt`] or
     /// [`Error::Sqlite`] otherwise.
