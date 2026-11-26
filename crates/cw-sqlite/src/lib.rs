@@ -33,10 +33,13 @@
 //! ```
 //!
 //! - [`db`]: [`Db`], the database a project names once, and what it does:
-//!   [`Db::write`], [`Db::read`], [`Db::check`].
-//! - [`connection`]: [`Reader`], the read-only connection [`Db::read`]
-//!   returns, and how both kinds of connection are opened.
-//! - [`migration`]: [`Step`], one append-only schema step.
+//!   [`Db::write`], [`Db::open_writer`], [`Db::checkpoint_truncate`],
+//!   [`Db::read`], [`Db::check`].
+//! - [`connection`]: [`Writer`], the owned read-write connection
+//!   [`Db::open_writer`] returns; [`Reader`], the read-only connection
+//!   [`Db::read`] returns; and how both kinds of connection are opened.
+//! - [`migration`]: [`Step`], one append-only schema step (with optional
+//!   `foreign_keys` and WAL `TRUNCATE` checkpoint guards).
 //! - [`error`]: the typed [`Error`] all of them fail with.
 //!
 //! `rusqlite` is re-exported, so a project names one version of it, through
@@ -49,7 +52,7 @@ pub mod migration;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
-pub use connection::Reader;
+pub use connection::{Reader, Writer};
 pub use db::Db;
 pub use error::{Error, Result};
 pub use migration::Step;

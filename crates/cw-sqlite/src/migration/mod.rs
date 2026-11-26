@@ -6,8 +6,11 @@
 //! end. Each step runs in its own `IMMEDIATE` transaction that re-reads the
 //! version first, so two processes opening a new database at once each run a
 //! step once, and a failing step leaves the version and the schema as they
-//! were. A database at a version past the end of the list was migrated by a
-//! newer build, and is refused for reads and writes alike.
+//! were. A step may also declare a WAL `TRUNCATE` checkpoint barrier
+//! ([`Step::checkpoint_truncate_before`]) that runs outside any transaction
+//! before its `IMMEDIATE` transaction begins. A database at a version past the
+//! end of the list was migrated by a newer build, and is refused for reads and
+//! writes alike.
 
 mod run;
 mod step;

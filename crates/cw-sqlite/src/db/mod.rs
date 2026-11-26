@@ -1,6 +1,9 @@
-//! The database a project names once, and the three things it does.
+//! The database a project names once, and what it does.
 
-use crate::connection::{Deadline, Reader, open_reader, open_writer};
+use crate::connection::{
+    Deadline, Reader, Writer, checkpoint_truncate, open_existing_writer, open_reader, open_writer,
+    open_writer_handle,
+};
 use crate::error::{Error, Result, ended_transaction};
 use crate::migration;
 use crate::migration::Step;
@@ -54,7 +57,8 @@ impl Db {
     /// (about 24.8 days), as `busy_timeout` capped it. It bounds the waits that
     /// go through the connection's busy handler: a lock for the version check
     /// before a write and for the writer's own version read, each migration
-    /// step, and the write lock (`BEGIN IMMEDIATE`); the switch to WAL, whose
+    /// step, any migration WAL-truncate barrier, [`Db::checkpoint_truncate`],
+    /// and the write lock (`BEGIN IMMEDIATE`); the switch to WAL, whose
     /// waits end at the same deadline whether SQLite waits through the busy
     /// handler (as it can when another connection holds a rollback-journal
     /// database) or returns a busy result, which the crate retries. One call
@@ -69,7 +73,11 @@ impl Db {
     /// deadline is SQLite's own retry for a WAL read mark (`walTryBeginRead`),
     /// which never calls the busy handler: it backs off on its own schedule
     /// and, when its retries run out, fails with `SQLITE_PROTOCOL`, reported as
-    /// [`Error::Sqlite`], not [`Error::Locked`].
+    /// [`Error::Sqlite`], not [`Error::Locked`]. A [`Writer`] returned by
+    /// [`Db::open_writer`] shares one deadline while opening and migrating,
+    /// and then keeps a clock-bounded busy handler that gives each subsequent
+    /// lock wait (and each [`Writer::checkpoint_truncate`] call) up to
+    /// `lock_wait`.
     #[must_use]
     pub fn lock_wait(self, wait: Duration) -> Self {
         Self {
@@ -81,7 +89,10 @@ impl Db {
     /// Whether writers set `PRAGMA secure_delete = ON`, so a deleted row's
     /// content is overwritten rather than left in a free page. Off by
     /// default: it costs a write per freed page, and only a project that
-    /// promises to forget text needs it.
+    /// promises to forget text needs it. Pair it with
+    /// [`Db::checkpoint_truncate`] or [`Writer::checkpoint_truncate`] (or
+    /// [`Step::checkpoint_truncate_before`] during migrations) to physically
+    /// clear older pages from the persisted `-wal` file after commit.
     #[must_use]
     pub fn secure_delete(self, on: bool) -> Self {
         Self {
@@ -143,6 +154,65 @@ impl Db {
         tx.commit()
             .map_err(|e| Error::sqlite("commit to", &self.path, e))?;
         Ok(value)
+    }
+
+    /// Open an owned, configured, migrated read-write connection.
+    ///
+    /// Enforces the same `cw-fs` inspection, `0600` creation when missing,
+    /// newer-version refusal, WAL switch, `synchronous = FULL`,
+    /// `foreign_keys = ON`, `PersistWal`, optional `secure_delete`, deadline
+    /// busy handler and migrations as [`Db::write`], without starting a write
+    /// transaction.
+    ///
+    /// Use [`Db::write`] for a single `IMMEDIATE` transaction. Use
+    /// `open_writer` when a caller owns its own transaction scope (for
+    /// example, savepoints, thread-local write scopes, or post-commit
+    /// [`Writer::checkpoint_truncate`]).
+    ///
+    /// While opening and migrating, every wait shares one call deadline of
+    /// `lock_wait`. Once returned, the [`Writer`] keeps a clock-bounded busy
+    /// handler that gives each subsequent lock wait up to `lock_wait`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Locked`] when another connection holds the database past the
+    /// lock wait; [`Error::Incompatible`] when a newer build migrated it;
+    /// [`Error::Migration`] when a step fails; [`Error::File`] when a file is
+    /// refused; [`Error::Corrupt`], [`Error::NotWal`] or [`Error::Sqlite`]
+    /// otherwise.
+    pub fn open_writer(&self) -> Result<Writer> {
+        open_writer_handle(
+            &self.path,
+            self.migrations,
+            self.lock_wait,
+            self.secure_delete,
+        )
+    }
+
+    /// Run `PRAGMA wal_checkpoint(TRUNCATE)` outside any transaction on an
+    /// existing database, retrying while `busy != 0` until the call's
+    /// `lock_wait` expires by the clock.
+    ///
+    /// Because writers keep the `-wal` file after the last connection closes
+    /// (`SQLITE_FCNTL_PERSIST_WAL`), a project using [`Db::secure_delete`]
+    /// calls this (or [`Writer::checkpoint_truncate`]) after commit to move
+    /// committed pages into the main file and truncate `-wal` to zero bytes so
+    /// deleted text no longer sits in older WAL frames.
+    ///
+    /// Does not create a missing database.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Missing`] when the database does not exist yet;
+    /// [`Error::Locked`] when another connection (a reader or a writer) blocks
+    /// truncation past the lock wait; [`Error::Incompatible`] when a newer
+    /// build migrated it; [`Error::Migration`] when a pending migration step
+    /// fails; [`Error::File`] when a file is refused; [`Error::Corrupt`],
+    /// [`Error::NotWal`] or [`Error::Sqlite`] otherwise.
+    pub fn checkpoint_truncate(&self) -> Result<()> {
+        let deadline = Deadline::after(self.lock_wait);
+        let conn = open_existing_writer(&self.path, self.migrations, deadline, self.secure_delete)?;
+        checkpoint_truncate(&conn, &self.path, deadline)
     }
 
     /// A new read-only connection. It writes no row, and blocks no writer,

@@ -166,3 +166,27 @@ fn a_read_during_a_write_sees_the_last_committed_state() -> TestResult {
     assert_eq!(values(&db)?, vec![1]);
     Ok(())
 }
+
+#[test]
+fn a_blocked_checkpoint_gives_up_within_twice_its_lock_wait_by_the_clock() -> TestResult {
+    const WAIT: Duration = Duration::from_millis(80);
+    let root = tempfile::tempdir()?;
+    let path = root.path().join("store.db");
+    let db = Db::new(&path, MIGRATIONS);
+    insert(&db, 1)?;
+    let reader = db.read()?;
+    let started = Instant::now();
+    let result = Db::new(&path, MIGRATIONS)
+        .lock_wait(WAIT)
+        .checkpoint_truncate();
+    let waited = started.elapsed();
+    drop(reader);
+    let err = result.err().ok_or("the blocked checkpoint did not fail")?;
+    assert!(matches!(err, Error::Locked { .. }), "{err:?}");
+    assert!(waited >= WAIT, "gave up after {waited:?}");
+    assert!(
+        waited < WAIT * 2,
+        "waited {waited:?} for a {WAIT:?} lock wait"
+    );
+    Ok(())
+}

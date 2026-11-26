@@ -1,5 +1,6 @@
-//! Opening a connection: a writer for each write, a [`Reader`] for each
-//! read. There is no pool; a command-line tool opens one per call.
+//! Opening a connection: a [`Writer`] (or single-call writer for
+//! [`crate::Db::write`]) for writes, and a [`Reader`] for reads. There is no
+//! pool; a command-line tool opens one per call.
 //!
 //! - **Files.** Before SQLite sees them, the database and its `-wal` and
 //!   `-shm` files are inspected through `cw-fs`: a link, another user's
@@ -62,7 +63,8 @@
 //!   milliseconds (about 24.8 days), as `busy_timeout` capped it. It bounds
 //!   the waits that go through the connection's busy handler: a lock for the
 //!   version check before a write and for the writer's own version read, each
-//!   migration step, and the write lock (`BEGIN IMMEDIATE`); the switch to
+//!   migration step, any migration WAL-truncate barrier,
+//!   [`crate::Db::checkpoint_truncate`], and the write lock (`BEGIN IMMEDIATE`); the switch to
 //!   WAL, whose waits end at the same deadline whether SQLite waits through
 //!   the busy handler (as it can when another connection holds a
 //!   rollback-journal database) or returns a busy result, which the crate
@@ -79,7 +81,11 @@
 //!   backs off on its own schedule and, when its retries run out, fails with
 //!   `SQLITE_PROTOCOL`, reported as `Error::Sqlite`, not
 //!   `Error::Locked`. A [`Reader`] keeps its call's deadline; inside its
-//!   snapshot it never waits.
+//!   snapshot it never waits. A [`Writer`] returned by
+//!   [`crate::Db::open_writer`] shares one deadline for opening and migrating,
+//!   and then keeps a clock-bounded busy handler that gives each subsequent
+//!   lock wait (and each [`Writer::checkpoint_truncate`] call) up to
+//!   `lock_wait`.
 //! - **Pragmas** are set with plain SQL, not `rusqlite`'s helper, which reads
 //!   the schema first and so fails on a read-only directory.
 
@@ -90,9 +96,14 @@ mod reader;
 mod writer;
 
 pub use reader::Reader;
+pub use writer::Writer;
 
 pub(crate) use deadline::Deadline;
 pub(crate) use files::{create_if_missing, inspect, resolve};
 pub(crate) use pragma::{get as get_pragma, set as set_pragma};
 pub(crate) use reader::open as open_reader;
-pub(crate) use writer::open as open_writer;
+pub(crate) use writer::{
+    CheckpointAttempt, checkpoint_truncate, open as open_writer,
+    open_existing as open_existing_writer, open_handle as open_writer_handle,
+    try_checkpoint_truncate_once,
+};

@@ -20,10 +20,10 @@ pub enum Error {
     /// group or other permission bit, or an I/O failure.
     #[error(transparent)]
     File(#[from] cw_fs::Error),
-    /// A reader was asked for a database that does not exist yet, or that
-    /// holds nothing yet: version 0 with no table, index, view or trigger,
-    /// as a first writer's database is until its first migration step
-    /// commits. A reader never creates one.
+    /// The database does not exist yet, or (for a reader) holds nothing yet:
+    /// version 0 with no table, index, view or trigger, as a first writer's
+    /// database is until its first migration step commits. Neither a reader
+    /// nor [`crate::Db::checkpoint_truncate`] creates one.
     #[error("{} does not exist yet; nothing has been written to it", path.display())]
     Missing {
         /// The database file.
@@ -130,8 +130,9 @@ impl Error {
     /// busy or locked is [`Error::Locked`], not-a-database or corrupt is
     /// [`Error::Corrupt`], anything else [`Error::Sqlite`].
     ///
-    /// For the statements a project runs inside [`crate::Db::write`] or on a
-    /// [`crate::Reader`], so its failures are classified as this crate's own.
+    /// For the statements a project runs inside [`crate::Db::write`], on a
+    /// [`crate::Writer`] or on a [`crate::Reader`], so its failures are
+    /// classified as this crate's own.
     #[must_use]
     pub fn sqlite(action: &'static str, path: &Path, source: rusqlite::Error) -> Self {
         let path = path.to_path_buf();
@@ -195,6 +196,27 @@ pub(crate) fn ended_transaction() -> rusqlite::Error {
         Some(String::from(
             "the transaction was ended by the caller's own COMMIT or ROLLBACK; \
              transaction control is not allowed inside it",
+        )),
+    )
+}
+
+/// The error for a WAL truncate checkpoint attempted inside an open transaction.
+pub(crate) fn inside_transaction() -> rusqlite::Error {
+    rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
+        Some(String::from(
+            "cannot checkpoint the write-ahead log inside an open transaction",
+        )),
+    )
+}
+
+/// The error when `PRAGMA wal_checkpoint(TRUNCATE)` reported `busy != 0` past
+/// the call's lock wait.
+pub(crate) fn checkpoint_busy() -> rusqlite::Error {
+    rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+        Some(String::from(
+            "the write-ahead log checkpoint was blocked by another connection",
         )),
     )
 }

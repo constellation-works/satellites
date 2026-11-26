@@ -33,6 +33,7 @@ use std::fmt;
 pub struct Step {
     body: Body,
     foreign_keys_off: bool,
+    checkpoint_truncate_before: bool,
 }
 
 /// What a step runs.
@@ -51,6 +52,7 @@ impl Step {
         Self {
             body: Body::Sql(sql),
             foreign_keys_off: false,
+            checkpoint_truncate_before: false,
         }
     }
 
@@ -61,6 +63,7 @@ impl Step {
         Self {
             body: Body::Function(apply),
             foreign_keys_off: false,
+            checkpoint_truncate_before: false,
         }
     }
 
@@ -83,6 +86,30 @@ impl Step {
         self.foreign_keys_off
     }
 
+    /// Run `PRAGMA wal_checkpoint(TRUNCATE)` outside any transaction before
+    /// this step's `BEGIN IMMEDIATE` transaction begins.
+    ///
+    /// Useful after an earlier step erased sensitive rows under
+    /// [`crate::Db::secure_delete`], so deleted pages are physically cleared
+    /// from the persisted `-wal` file before `user_version` advances past this
+    /// step. Retries while `busy != 0` until the call's lock wait expires,
+    /// failing with [`crate::Error::Locked`] and leaving `user_version`
+    /// unchanged when another connection blocks truncation.
+    #[must_use]
+    pub const fn checkpoint_truncate_before(self) -> Self {
+        Self {
+            checkpoint_truncate_before: true,
+            ..self
+        }
+    }
+
+    /// Whether this step runs a WAL `TRUNCATE` checkpoint barrier before its
+    /// transaction begins.
+    #[must_use]
+    pub const fn runs_checkpoint_truncate_before(&self) -> bool {
+        self.checkpoint_truncate_before
+    }
+
     pub(crate) fn apply(&self, tx: &Transaction<'_>) -> rusqlite::Result<()> {
         match self.body {
             Body::Sql(sql) => tx.execute_batch(sql),
@@ -100,6 +127,10 @@ impl fmt::Debug for Step {
         f.debug_struct("Step")
             .field("body", &body)
             .field("foreign_keys_off", &self.foreign_keys_off)
+            .field(
+                "checkpoint_truncate_before",
+                &self.checkpoint_truncate_before,
+            )
             .finish()
     }
 }
