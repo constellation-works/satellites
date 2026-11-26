@@ -58,6 +58,23 @@
 //!   read-only, so it may hold one open read-write; a read-only connection
 //!   writes nothing through it. In a writable directory the main
 //!   file is never trusted alone.
+//! - **Strict readers** ([`crate::Db::read_strict`]) create and change no
+//!   file, in a directory this process can write too. They open the index
+//!   read-only (`readonly_shm=1`) as an ordinary reader does in a directory
+//!   this process cannot write, and look for the `-wal` and `-shm` by name
+//!   first, since SQLite would create a missing one. A database with either
+//!   missing, or whose index needs recovery, is refused with
+//!   `Error::WalUnavailable` (`Kind::Refused`), naming the database and the
+//!   missing files, and creating nothing: the main file alone is never read
+//!   in its place, because in a writable directory a writer may exist, and
+//!   `immutable=1` is never used. An ordinary read or write of the database
+//!   creates the files, as always. Because SQLite maps the `-shm` once per
+//!   process, a strict reader that mapped it read-only first makes it
+//!   read-only for this process's writers while any connection of the
+//!   process to the database lives: [`crate::Db::write`] fails with
+//!   `Error::Sqlite` (`SQLITE_READONLY`), as does a write through a
+//!   [`Writer`] from [`crate::Db::open_writer`], and nothing is changed.
+//!   Once the last connection has closed, a writer maps it writable again.
 //! - **The lock wait** is one deadline for the whole call: the lock wait
 //!   after the call started, by the clock (`Instant`), at most `i32::MAX`
 //!   milliseconds (about 24.8 days), as `busy_timeout` capped it. It bounds
@@ -101,7 +118,7 @@ pub use writer::Writer;
 pub(crate) use deadline::Deadline;
 pub(crate) use files::{create_if_missing, inspect, resolve};
 pub(crate) use pragma::{get as get_pragma, set as set_pragma};
-pub(crate) use reader::open as open_reader;
+pub(crate) use reader::{open as open_reader, open_strict as open_strict_reader};
 pub(crate) use writer::{
     CheckpointAttempt, checkpoint_truncate, open as open_writer,
     open_existing as open_existing_writer, open_handle as open_writer_handle,

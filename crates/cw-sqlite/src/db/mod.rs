@@ -1,8 +1,8 @@
 //! The database a project names once, and what it does.
 
 use crate::connection::{
-    Deadline, Reader, Writer, checkpoint_truncate, open_existing_writer, open_reader, open_writer,
-    open_writer_handle,
+    Deadline, Reader, Writer, checkpoint_truncate, open_existing_writer, open_reader,
+    open_strict_reader, open_writer, open_writer_handle,
 };
 use crate::error::{Error, Result, ended_transaction};
 use crate::migration;
@@ -234,6 +234,62 @@ impl Db {
     /// [`Error::Sqlite`] otherwise.
     pub fn read(&self) -> Result<Reader> {
         open_reader(&self.path, self.migrations, Deadline::after(self.lock_wait))
+    }
+
+    /// A new read-only connection that creates and changes no file: for a
+    /// command that observes and writes nothing, in a directory this process
+    /// can write too. It is [`Db::read`] with the `-shm` index opened
+    /// read-only (`readonly_shm=1`), as [`Db::read`] opens it in a directory
+    /// this process cannot write, so SQLite creates no `-wal` or `-shm` and
+    /// rebuilds no `-shm`. It writes no row, never checkpoints on close, and
+    /// returns a [`Reader`] with the same snapshot, version check and
+    /// `query_only` guarantees; [`Reader::immutable`] is always `false`.
+    ///
+    /// The cost is the case it refuses. In a writable directory a writer may
+    /// exist, so the main file alone cannot be trusted (`immutable=1` is not
+    /// safe), and a strict read needs both `-wal` and `-shm` to exist and the
+    /// `-shm` to be usable as it is. When either file is missing, or the
+    /// `-shm` needs recovery (the last connection that held it has closed,
+    /// say, and nothing can be rebuilt read-only), it fails with
+    /// [`Error::WalUnavailable`], naming the database and the missing files,
+    /// before it creates a file or reads a page. A later [`Db::read`] or
+    /// [`Db::write`] of the same database creates or rebuilds the files, as
+    /// it always does, and a strict read then succeeds. The crate's writers
+    /// keep both files after the last connection closes
+    /// (`SQLITE_FCNTL_PERSIST_WAL`), so a database this crate wrote is
+    /// readable this way until another tool removes its files. If the last
+    /// other connection removes them between the check for them and SQLite's
+    /// open, SQLite may create them, as it does for [`Db::read`].
+    ///
+    /// SQLite maps a database's `-shm` once per process, so a strict
+    /// [`Reader`] that opened it read-only makes it read-only for the
+    /// connections of this process that open the same database while it
+    /// lives: a [`Db::write`] or [`Db::open_writer`] in the same process, while
+    /// that reader (or any other connection of this process to the
+    /// database) is open, cannot use the index and fails with
+    /// [`Error::Sqlite`], leaving the database unchanged. Once the last
+    /// connection of the process to it has closed, a writer maps the index
+    /// writable again. Drop the strict reader before writing, or read with
+    /// [`Db::read`]. A strict reader in another process does not affect this
+    /// one's writers, and a writer in another process does not affect a strict
+    /// read: it reads that writer's committed rows and changes no file.
+    ///
+    /// The read-only index is the first mapping in a process. When a
+    /// connection of this process (a [`Writer`], say) already holds the index
+    /// writable, the strict reader shares that mapping, as every connection
+    /// does, and may update the read marks in the `-shm` as any reader does,
+    /// creating nothing; that holds only inside a process that writes the
+    /// same database.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::WalUnavailable`] as above; [`Error::Missing`] when the
+    /// database does not exist yet, or holds nothing yet;
+    /// [`Error::Incompatible`] when a newer build migrated it;
+    /// [`Error::File`] when a file is refused; [`Error::Corrupt`] or
+    /// [`Error::Sqlite`] otherwise.
+    pub fn read_strict(&self) -> Result<Reader> {
+        open_strict_reader(&self.path, self.migrations, Deadline::after(self.lock_wait))
     }
 
     /// Run `PRAGMA quick_check` on a read-only connection, for a doctor

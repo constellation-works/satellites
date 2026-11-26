@@ -29,6 +29,32 @@ pub enum Error {
         /// The database file.
         path: PathBuf,
     },
+    /// A strict read ([`crate::Db::read_strict`]) was refused: the database's
+    /// write-ahead log files are missing or need recovery, and a strict read
+    /// creates and changes no file.
+    ///
+    /// `missing` lists the `-wal` and `-shm` files that do not exist, and is
+    /// empty when both exist but SQLite could not use them as they are, the
+    /// `-shm` needing recovery or a file unreadable (`source` is then
+    /// SQLite's error). Nothing was
+    /// created, and no page was read: the main file alone may lack committed
+    /// pages, so it is not read in place of the log. An ordinary
+    /// [`crate::Db::read`] or [`crate::Db::write`] of the same database
+    /// creates or rebuilds the files, after which a strict read can succeed.
+    #[error(
+        "{} cannot be read without creating or changing files: its write-ahead log files ({}) are missing or need recovery; an ordinary read or write of it creates or rebuilds them",
+        path.display(),
+        wal_files(missing)
+    )]
+    WalUnavailable {
+        /// The database file.
+        path: PathBuf,
+        /// The `-wal` and `-shm` files that do not exist.
+        missing: Vec<PathBuf>,
+        /// SQLite's error, when the files exist but cannot be used as they are.
+        #[source]
+        source: Option<rusqlite::Error>,
+    },
     /// Another connection held the database past the lock wait.
     ///
     /// It names no holder. SQLite's locks are byte-range locks on the
@@ -119,6 +145,7 @@ impl Error {
         match self {
             Self::File(e) => e.kind(),
             Self::Missing { .. } => Kind::NotFound,
+            Self::WalUnavailable { .. } => Kind::Refused,
             Self::Locked { .. } => Kind::Busy,
             Self::Corrupt { .. } | Self::CheckFailed { .. } => Kind::Corrupt,
             Self::Incompatible { .. } => Kind::Incompatible,
@@ -162,6 +189,19 @@ impl Error {
             }
         }
     }
+}
+
+/// The names of the missing files, or what a reader says when both exist.
+fn wal_files(missing: &[PathBuf]) -> String {
+    if missing.is_empty() {
+        return String::from("-wal and -shm exist, but cannot be used as they are");
+    }
+    let names: Vec<String> = missing
+        .iter()
+        .filter_map(|file| file.file_name())
+        .map(|name| format!("{} is missing", name.to_string_lossy()))
+        .collect();
+    names.join(", ")
 }
 
 /// Another connection holds the database.

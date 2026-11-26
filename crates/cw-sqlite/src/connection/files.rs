@@ -103,6 +103,44 @@ pub(crate) fn wal_has_content(path: &Path) -> Result<bool> {
     }
 }
 
+/// The `-wal` and `-shm` files beside the database at `path` that do not
+/// exist, by name and without opening them. A strict read needs both, since
+/// SQLite would create a missing one when it opens the database in a
+/// directory this process can write.
+pub(crate) fn missing_sidecars(path: &Path) -> Result<Vec<PathBuf>> {
+    let mut missing = Vec::new();
+    for suffix in ["-wal", "-shm"] {
+        let file = sidecar(path, suffix);
+        match std::fs::symlink_metadata(&file) {
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => missing.push(file),
+            Err(source) => {
+                return Err(Error::File(cw_fs::Error::Io {
+                    action: "inspect",
+                    path: file,
+                    source,
+                }));
+            }
+        }
+    }
+    Ok(missing)
+}
+
+/// Whether the database file at `path` has no bytes, so holds nothing yet
+/// (as a first writer's does until its first migration step commits). Looked
+/// at by name, without opening it.
+pub(crate) fn is_empty_file(path: &Path) -> Result<bool> {
+    std::fs::symlink_metadata(path)
+        .map(|meta| meta.len() == 0)
+        .map_err(|source| {
+            Error::File(cw_fs::Error::Io {
+                action: "inspect",
+                path: path.to_path_buf(),
+                source,
+            })
+        })
+}
+
 /// Whether this process, with its effective credentials, may create files
 /// in the database's directory. When it may not, the reader writes nothing
 /// there, and when the WAL cannot be read, no writer can exist

@@ -1,7 +1,7 @@
 //! Opening a read-only connection.
 
 use super::deadline::Deadline;
-use super::files::{directory_writable, wal_has_content};
+use super::files::{directory_writable, is_empty_file, missing_sidecars, wal_has_content};
 use super::{get_pragma, inspect, resolve, set_pragma};
 use crate::error::{Error, Result, is_wal_unreadable};
 use crate::migration;
@@ -11,8 +11,8 @@ use rusqlite::{Connection, OpenFlags};
 use std::ops::Deref;
 use std::path::Path;
 
-/// A read-only, `query_only` connection, from [`crate::Db::read`]. It
-/// dereferences to the [`Connection`].
+/// A read-only, `query_only` connection, from [`crate::Db::read`] or the
+/// strict [`crate::Db::read_strict`]. It dereferences to the [`Connection`].
 ///
 /// It holds one read transaction from the moment its schema version was
 /// checked until it is dropped, so every statement through it reads the
@@ -47,7 +47,9 @@ impl Reader {
     /// `immutable=1`: a copy, or a database on a read-only mount, in a
     /// directory this process cannot write, with no readable index and
     /// nothing in its `-wal`. What it reads is the main file alone, so a
-    /// caller may say that the view is a copy's.
+    /// caller may say that the view is a copy's. A strict reader
+    /// ([`crate::Db::read_strict`]) is never immutable: it is refused where
+    /// an ordinary reader would be.
     #[must_use]
     pub fn immutable(&self) -> bool {
         self.immutable
@@ -79,6 +81,54 @@ impl Deref for Reader {
 /// it sees the same snapshot as the version check and every later read.
 pub(crate) fn open(path: &Path, migrations: &[Step], deadline: Deadline) -> Result<Reader> {
     let reader = open_resolved(path, &resolve(path)?, migrations, deadline)?;
+    refuse_if_empty(path, reader)
+}
+
+/// A [`Reader`] on the database at `path` that creates and changes no file,
+/// from [`crate::Db::read_strict`]: [`open`]'s refusals, and
+/// [`Error::WalUnavailable`] when the `-wal` or `-shm` is missing or the
+/// index needs recovery.
+///
+/// The `-shm` is opened read-only whatever the directory (`readonly_shm=1`),
+/// so SQLite creates and rebuilds nothing; a missing `-wal` it would create
+/// in a directory this process can write, so both files are looked for first,
+/// by name, and a missing one refuses the read before SQLite opens anything.
+/// A database whose files are gone cannot be trusted by its main file alone,
+/// as a writer may exist, so `immutable=1` is never used. If the last other
+/// connection closes and removes the files between that look and SQLite's
+/// open, SQLite may create them as an ordinary read does.
+pub(crate) fn open_strict(path: &Path, migrations: &[Step], deadline: Deadline) -> Result<Reader> {
+    let real = resolve(path)?;
+    if !inspect(&real)? || is_empty_file(&real)? {
+        return Err(Error::Missing {
+            path: path.to_path_buf(),
+        });
+    }
+    let missing = missing_sidecars(&real)?;
+    if !missing.is_empty() {
+        return Err(Error::WalUnavailable {
+            path: path.to_path_buf(),
+            missing,
+            source: None,
+        });
+    }
+    let reader =
+        open_as(path, &real, migrations, deadline, Open::ReadOnlyIndex).map_err(|attempt| {
+            match attempt {
+                Attempt::WalUnreadable(e) => Error::WalUnavailable {
+                    path: path.to_path_buf(),
+                    missing: Vec::new(),
+                    source: Some(e),
+                },
+                Attempt::Failed(e) => e,
+            }
+        })?;
+    refuse_if_empty(path, reader)
+}
+
+/// `reader`, or [`Error::Missing`] when it is at version 0 and holds nothing,
+/// in its own snapshot.
+fn refuse_if_empty(path: &Path, reader: Reader) -> Result<Reader> {
     if reader.version == 0
         && holds_nothing(&reader.conn).map_err(|e| Error::sqlite("read the schema of", path, e))?
     {
@@ -111,6 +161,9 @@ fn holds_nothing(conn: &Connection) -> rusqlite::Result<bool> {
 ///   writer here could use either), the reader opens it read-only
 ///   (`readonly_shm=1`) instead, and SQLite may still create a missing
 ///   `-wal`, owner-only. The main file is never trusted alone.
+/// - **Strict** ([`open_strict`]): the index is opened read-only whatever the
+///   directory, and a missing `-wal` or `-shm` is refused before SQLite
+///   opens anything, since SQLite would create it in a writable directory.
 /// - **Not writable:** the reader writes nothing there. The index is
 ///   opened read-only; when SQLite cannot read the WAL that way (the `-shm`
 ///   or the `-wal` is missing), no writer can exist, so the main file is a

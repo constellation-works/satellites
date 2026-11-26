@@ -27,17 +27,21 @@
 //!     .and_then(|mut count| count.query_row([], |row| row.get(0)))
 //!     .map_err(|e| cw_sqlite::Error::sqlite("count the notes in", db.path(), e))?;
 //! db.check()?;
-//! # let _ = count;
+//! // A command that must create and change no file reads strictly: refused
+//! // with `Error::WalUnavailable` when the database's `-wal` or `-shm` is
+//! // missing, never served from the main file alone.
+//! let strict = db.read_strict()?;
+//! # let _ = (count, strict);
 //! # Ok(())
 //! # }
 //! ```
 //!
 //! - [`db`]: [`Db`], the database a project names once, and what it does:
 //!   [`Db::write`], [`Db::open_writer`], [`Db::checkpoint_truncate`],
-//!   [`Db::read`], [`Db::check`].
+//!   [`Db::read`], [`Db::read_strict`], [`Db::check`].
 //! - [`connection`]: [`Writer`], the owned read-write connection
 //!   [`Db::open_writer`] returns; [`Reader`], the read-only connection
-//!   [`Db::read`] returns; and how both kinds of connection are opened.
+//!   [`Db::read`] and [`Db::read_strict`] return; and how both kinds of connection are opened.
 //! - [`migration`]: [`Step`], one append-only schema step (with optional
 //!   `foreign_keys` and WAL `TRUNCATE` checkpoint guards).
 //! - [`error`]: the typed [`Error`] all of them fail with.

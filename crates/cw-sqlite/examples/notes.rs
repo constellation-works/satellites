@@ -1,5 +1,6 @@
 //! A small notes store: append-only migrations, one write transaction, a
-//! read-only reader and an integrity check.
+//! read-only reader, a strict read that creates and changes no file, and an
+//! integrity check.
 //!
 //! It shows the conventions the kit leaves to a project: `STRICT` tables,
 //! RFC 3339 UTC text timestamps, and JSON in a text column with a
@@ -62,5 +63,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     db.check()?;
     writeln!(out, "quick_check: ok")?;
+
+    // A command that must create and change no file reads strictly. The
+    // writer above left its `-wal` and `-shm`, so this succeeds; with either
+    // missing it is refused with `Error::WalUnavailable`, never served from
+    // the main file alone.
+    let strict = db.read_strict()?;
+    let count: i64 = strict
+        .query_row("SELECT count(*) FROM note", [], |row| row.get(0))
+        .map_err(|e| Error::sqlite("count the notes in", db.path(), e))?;
+    writeln!(
+        out,
+        "strict read: {count} notes, no file created or changed"
+    )?;
     Ok(())
 }
