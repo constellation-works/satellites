@@ -14,6 +14,8 @@
 //!   one usage table.
 //! - [`audit`]: the started and outcome lines a mutating command leaves in
 //!   `<root>/audit.jsonl`, their versioned format, and a reader that pairs them.
+//!   A started line already names the record the command is aimed at when the
+//!   app implements [`App::subject`].
 //! - [`error`]: the typed [`Error`] this crate fails with.
 //!
 //! The crate is generic over what the program built at start ([`App::State`]),
@@ -50,6 +52,13 @@
 //!     }
 //!
 //!     fn target(_: &String) -> Option<String> {
+//!         None
+//!     }
+//!
+//!     // Optional. A mutating command returns the id of the record it is
+//!     // aimed at, resolved from its own state, never what the user typed;
+//!     // the default is `None`.
+//!     fn subject(_: &Ctx<'_, ()>, _: &String) -> Option<String> {
 //!         None
 //!     }
 //! }

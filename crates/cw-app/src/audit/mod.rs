@@ -6,11 +6,16 @@
 //! outcome after rendering, appending it under the same ID.
 //!
 //! - **Identifiers only.** A line carries the command name, the record it
-//!   acted on, the outcome, the stable error code, the surface and the
-//!   actor: never an argument value or an error message, which can hold the
-//!   data itself or a path. The actor is what the client claimed, so it is
-//!   written only when it reads as an identifier ([`ACTOR_PLACEHOLDER`]
-//!   otherwise).
+//!   acted on or was aimed at, the outcome, the stable error code, the
+//!   surface and the actor: never an argument value or an error message,
+//!   which can hold the data itself or a path. The actor is what the client
+//!   claimed and the target is what the app supplied, so each is written
+//!   only when it reads as an identifier ([`ACTOR_PLACEHOLDER`] and
+//!   [`TARGET_PLACEHOLDER`] otherwise).
+//! - **The target is known before the command runs.** An app may resolve the
+//!   id of the record a command is aimed at ([`crate::App::subject`]); the
+//!   started line carries it, and the outcome line keeps it on failure, so
+//!   a refused write and a start with no outcome still name their record.
 //! - **An explicit unknown outcome.** The reader pairs starts and outcomes
 //!   by ID. A start without an outcome reads as [`Status::Unknown`].
 //! - **Its own lock.** Lines are appended through [`cw_fs::append`] under
@@ -28,13 +33,16 @@
 //!   closed before the next record, so that record stays whole.
 
 mod actor;
+mod identifier;
 mod line;
 mod log;
 mod meta;
 mod pending;
+mod target;
 
 pub use actor::{ACTOR_MAX_LEN, ACTOR_PLACEHOLDER};
 pub use line::{FORMAT, Record, Status};
 pub use log::{AuditLog, FILE, LOCK_FILE};
 pub use meta::AuditMeta;
 pub use pending::{AuditWarning, Pending};
+pub use target::{TARGET_MAX_LEN, TARGET_PLACEHOLDER};

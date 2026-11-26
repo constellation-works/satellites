@@ -1,5 +1,7 @@
 //! The actor as the audit line records it: an identifier, never free text.
 
+use super::identifier::is_identifier;
+
 /// The longest actor, in bytes, a line records.
 pub const ACTOR_MAX_LEN: usize = 64;
 
@@ -17,12 +19,7 @@ pub const ACTOR_PLACEHOLDER: &str = "<invalid>";
 /// `:` `/`; anything else is written as [`ACTOR_PLACEHOLDER`], never
 /// verbatim and never trimmed to a prefix.
 pub(super) fn recorded(actor: &str) -> &str {
-    let is_identifier = !actor.is_empty()
-        && actor.len() <= ACTOR_MAX_LEN
-        && actor
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b".-_@+:/".contains(&b));
-    if is_identifier {
+    if is_identifier(actor, ACTOR_MAX_LEN) {
         actor
     } else {
         ACTOR_PLACEHOLDER

@@ -39,11 +39,14 @@ impl Pending {
         Self { entry: None }
     }
 
-    /// Write the started line before the command can run.
+    /// Write the started line before the command can run. `subject` is the
+    /// id of the record the command is aimed at, when the app resolved one;
+    /// the started line carries it as the target.
     pub(crate) fn start(
         log: AuditLog,
         wait: Duration,
         meta: AuditMeta,
+        subject: Option<String>,
         at: OffsetDateTime,
         origin: &Origin,
     ) -> Result<Self, cw_base::Error> {
@@ -60,7 +63,7 @@ impl Pending {
             actor: origin.actor().map(str::to_owned),
             command: meta.command().to_owned(),
             status: Status::Unknown,
-            target: None,
+            target: subject,
             error_code: None,
             duration_ms: None,
         };
@@ -79,7 +82,8 @@ impl Pending {
     }
 
     /// Record how the command ended: on success the record it acted on, if
-    /// it names one; on failure the stable error code.
+    /// it names one (otherwise the started line's subject stays); on failure
+    /// the stable error code, with the subject kept beside it.
     pub(crate) fn mark(&mut self, result: std::result::Result<Option<String>, &'static str>) {
         let Some(entry) = self.entry.as_mut() else {
             return;
@@ -90,7 +94,9 @@ impl Pending {
         match result {
             Ok(target) => {
                 record.status = Status::Success;
-                record.target = target;
+                if target.is_some() {
+                    record.target = target;
+                }
             }
             Err(code) => {
                 record.status = Status::Failure;

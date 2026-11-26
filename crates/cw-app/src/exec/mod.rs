@@ -22,7 +22,8 @@ use crate::audit::Pending;
 /// Run `command` of app `A` against `runtime`, for the client `origin`.
 ///
 /// A command [`App::audit`] declares mutating runs only after its started
-/// line has been appended. If preparing or appending the line fails, the
+/// line has been appended; [`App::subject`] is asked first, for that command
+/// alone, so the line can name the record the command is aimed at. If preparing or appending the line fails, the
 /// result contains `audit_start_failed` with a typed [`crate::Error`]
 /// cause, or `audit_id_failed` if an ID could not be generated. A read-only
 /// command creates no audit file and takes no audit lock. The app's typed
@@ -43,6 +44,9 @@ pub fn exec<A: App>(
             runtime.audit_log().clone(),
             runtime.audit_wait(),
             meta,
+            // A read of the store, before the started line: nothing is
+            // mutated before the line exists.
+            A::subject(&ctx, &command),
             ctx.now(),
             origin,
         ) {
@@ -52,8 +56,9 @@ pub fn exec<A: App>(
         None => Pending::none(),
     };
     let result = A::run(&ctx, command).map_err(Into::into);
-    // The target exists for the audit line alone: a read-only command's
-    // outcome is never handed to `A::target`.
+    // The target and the subject exist for the audit line alone: a read-only
+    // command's outcome is never handed to `A::target`, nor the command to
+    // `A::subject`.
     if audit.is_audited() {
         audit.mark(result.as_ref().map(A::target).map_err(cw_base::Error::code));
     }

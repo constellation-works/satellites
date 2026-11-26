@@ -4,7 +4,8 @@
 //! Formats 1 through 3 held a single record per command. Format 4 adds a
 //! phase and pairs the two lines of a write-ahead record by ID.
 
-use super::actor::recorded;
+use super::actor::recorded as recorded_actor;
+use super::target::recorded as recorded_target;
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -68,7 +69,11 @@ pub struct Record {
     pub command: String,
     /// How it ended.
     pub status: Status,
-    /// The record it acted on, when it succeeded and named one.
+    /// The id of the record the command acted on or was aimed at, when known:
+    /// the app's resolved subject on the started line (and so on a start with
+    /// no outcome), kept on a failure, and replaced on success by the record
+    /// the outcome names, if it names one. An identifier, or
+    /// [`super::TARGET_PLACEHOLDER`] when the app supplied anything else.
     pub target: Option<String>,
     /// The stable error code, when it failed with one; never a message.
     pub error_code: Option<String>,
@@ -110,21 +115,25 @@ struct Probe {
 
 /// `record` as one newline-terminated JSON line in the newest format.
 ///
-/// The actor is written only when it reads as an identifier, and as
-/// [`super::ACTOR_PLACEHOLDER`] otherwise, whoever built the record.
+/// The actor and the target are each written only when they read as an
+/// identifier, and as [`super::ACTOR_PLACEHOLDER`] or
+/// [`super::TARGET_PLACEHOLDER`] otherwise, whoever built the record.
 pub(super) fn encode(record: &Record, phase: &Phase) -> Result<Vec<u8>> {
-    let actor = record.actor.as_deref().map(recorded);
-    let record = match actor {
-        Some(actor) if Some(actor) != record.actor.as_deref() => &Record {
-            actor: Some(actor.to_owned()),
-            ..record.clone()
-        },
-        _ => record,
+    let guarded = Record {
+        actor: record
+            .actor
+            .as_deref()
+            .map(|actor| recorded_actor(actor).to_owned()),
+        target: record
+            .target
+            .as_deref()
+            .map(|target| recorded_target(target).to_owned()),
+        ..record.clone()
     };
     let mut bytes = serde_json::to_vec(&Line {
         format: FORMAT,
         phase,
-        record,
+        record: &guarded,
     })
     .map_err(Error::Encode)?;
     bytes.push(b'\n');

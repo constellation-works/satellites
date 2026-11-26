@@ -7,7 +7,7 @@ commands and command-specific error codes.
 
 | Item | What it does |
 |---|---|
-| `App` | What a program supplies once: its state, commands, outcome and error; which commands are audited, how to run one, what an outcome acted on |
+| `App` | What a program supplies once: its state, commands, outcome and error; which commands are audited, how to run one, what an outcome acted on, optionally which record a command is aimed at |
 | `exec::<A>(runtime, origin, command)` | Appends a started line before running a mutating command, then returns a `Finished` |
 | `Finished` | Render the result, then call `settle()` to append the outcome. An outcome append error comes back as an `AuditWarning` |
 | `Runtime<S>` / `Ctx<'_, S>` | What the program built at start, and the borrowed view a command runs against: state, clock, origin |
@@ -42,7 +42,15 @@ if let Some(warning) = warning { eprintln!("warning: {warning}") }
 - **Identifiers only.** A line holds the time, surface, actor, command name, status,
   target, stable error code and duration: never an argument value or an error message.
   The actor is the client's claim, recorded only when it is an identifier (at most 64 bytes
-  of ASCII letters, digits and `.` `_` `-` `@` `+` `:` `/`), else as `<invalid>`.
+  of ASCII letters, digits and `.` `_` `-` `@` `+` `:` `/`), else as `<invalid>`. The target
+  is the app's, under the same rule (at most 128 bytes), else `<invalid>`.
+- **The target is known before the command runs.** An app may implement `App::subject`: the
+  id of the record a mutating command is aimed at, resolved against its own state (a read,
+  before the started line; `None` by default). The started line carries it as the target and
+  the outcome line keeps it on failure, so a refused write and a start with no outcome
+  still name their record. On success `App::target(outcome)` wins when it names a record
+  (a newly created id); otherwise the subject stays. Return a resolved id, never the selector
+  the user typed.
 - **Its own lock.** Appends go through `cw_fs::append` under `<root>/.audit.lock`, never a
   program's own lock, so a command that timed out on that lock still records its failure.
 - **Write-ahead.** A started append failure stops the command. An outcome append failure

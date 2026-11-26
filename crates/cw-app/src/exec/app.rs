@@ -35,6 +35,26 @@ pub trait App {
     ) -> Result<Self::Outcome, Self::Error>;
 
     /// The id of the record `outcome` acted on, when it names one, for the
-    /// audit line.
+    /// audit line. On success it wins over [`App::subject`]: a command that
+    /// creates a record names the new id here.
     fn target(outcome: &Self::Outcome) -> Option<String>;
+
+    /// The id of the record `command` is aimed at, resolved against the
+    /// program's own state, or `None` when it names none or does not resolve.
+    /// The default is `None`.
+    ///
+    /// [`super::exec()`] calls it only for a command [`App::audit`] declares
+    /// mutating, before the started line is appended, so the line names the
+    /// record even when the command is refused or never returns. The
+    /// outcome line keeps it when the command fails. It is a read: it
+    /// must not change the store, and it cannot fail the command.
+    ///
+    /// Return a resolved id, never the selector the user typed (a title, a
+    /// path, a prefix): the log writes the value only when it reads as an
+    /// identifier of bounded length, and as [`crate::audit::TARGET_PLACEHOLDER`]
+    /// otherwise, but that guard only bounds the damage.
+    fn subject(ctx: &Ctx<'_, Self::State>, command: &Self::Command) -> Option<String> {
+        let _ = (ctx, command);
+        None
+    }
 }

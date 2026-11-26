@@ -105,7 +105,10 @@ impl AuditLog {
 
     /// Audited commands in start order, provided the file holds at most
     /// `cap` bytes. An absent log has no records. Each start is paired with
-    /// its outcome by ID. A start without an outcome has [`Status::Unknown`].
+    /// its outcome by ID. A start without an outcome has [`Status::Unknown`]
+    /// and keeps the target its started line carried (the subject the app
+    /// resolved before the command ran); the outcome line's target replaces it
+    /// when there is one.
     ///
     /// A malformed or unsupported line, a second start with the same
     /// pending ID, or an outcome without a matching start is returned as
@@ -147,7 +150,6 @@ impl AuditLog {
                     Entry::Vacant(start) => {
                         start.insert(records.len());
                         record.status = Status::Unknown;
-                        record.target = None;
                         record.error_code = None;
                         record.duration_ms = None;
                         records.push(Ok(record));

@@ -52,3 +52,35 @@ fn older_lines_are_upgraded_and_a_newer_line_is_refused() -> TestResult {
     ));
     Ok(())
 }
+
+#[test]
+fn a_started_line_keeps_its_target_and_the_outcome_line_replaces_the_record() -> TestResult {
+    let scratch = tempfile::tempdir()?;
+    let root = scratch.path().join("data");
+    cw_fs::create_private_dir(&root)?;
+    let log = AuditLog::new(&root);
+    let lines = [
+        r#"{"format":4,"phase":"started","id":"a","at":"2026-01-01T00:00:00Z","surface":"mcp","actor":"u","command":"note touch","status":"unknown","target":"n-1","error_code":null,"duration_ms":null}"#,
+        r#"{"format":4,"phase":"started","id":"b","at":"2026-01-02T00:00:00Z","surface":"mcp","actor":"u","command":"note touch","status":"unknown","target":"n-2","error_code":null,"duration_ms":null}"#,
+        r#"{"format":4,"phase":"outcome","id":"b","at":"2026-01-02T00:00:00Z","surface":"mcp","actor":"u","command":"note touch","status":"failure","target":"n-2","error_code":"write_refused","duration_ms":2}"#,
+        r#"{"format":4,"phase":"started","id":"c","at":"2026-01-03T00:00:00Z","surface":"mcp","actor":"u","command":"note touch","status":"unknown","target":null,"error_code":null,"duration_ms":null}"#,
+    ];
+    cw_fs::append(&log.path(), format!("{}\n", lines.join("\n")).as_bytes())?;
+
+    let mut read = log.read(Cap::bytes(1 << 16))?.into_iter();
+    let unknown = read.next().ok_or("start a")??;
+    assert_eq!(unknown.status, Status::Unknown);
+    assert_eq!(unknown.target.as_deref(), Some("n-1"));
+    assert_eq!(unknown.error_code, None);
+    assert_eq!(unknown.duration_ms, None);
+
+    let failed = read.next().ok_or("pair b")??;
+    assert_eq!(failed.status, Status::Failure);
+    assert_eq!(failed.target.as_deref(), Some("n-2"));
+    assert_eq!(failed.error_code.as_deref(), Some("write_refused"));
+
+    let unnamed = read.next().ok_or("start c")??;
+    assert_eq!(unnamed.status, Status::Unknown);
+    assert_eq!(unnamed.target, None);
+    Ok(())
+}
