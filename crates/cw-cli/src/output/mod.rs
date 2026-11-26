@@ -172,7 +172,7 @@ impl<O: Write, E: Write> Sink<O, E> {
                     if !escaped.is_empty() {
                         ends_in_newline = escaped.ends_with('\n');
                     }
-                    text.push_str(&span.role.paint(&escaped, self.terminal.color()));
+                    text.push_str(&span.role.paint(&escaped, Color::of(self.terminal.color())));
                 }
                 if !ends_in_newline {
                     text.push('\n');
