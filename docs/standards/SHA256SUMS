@@ -1,7 +1,7 @@
-ee6916e7a7c5c75129cb09c6d0823c3ba353187a98d37db0d75915d83b035c88  README.md
-5329f3b9807c3e12c8883cf88dd8d4a01f4e96b25f9c02042a67b443fb95e18e  STD-02-rust-architecture-and-errors/CHANGELOG.md
+21e4710b6c66186e85e0400c3750ad3c4ac89f6cff4f3e81a97092c8934c03b4  README.md
+5be2fb321230aec03e4e71d04fec0d89643d34401a0da80fb02d641eeffda4e6  STD-02-rust-architecture-and-errors/CHANGELOG.md
 903238cce95e6ea4e4f2193473d0e64afe56597799793414016ea639c59347a3  STD-02-rust-architecture-and-errors/STD-02.md
-aae7d835a79b1aa6b38322ecf19ee168b6a246e33ac89a3e79dcf325fc8fcc50  STD-02-rust-architecture-and-errors/checks.md
+f22c98cedac74d7b8fcfd015ccaad43e0cb5c0633a02e5c4f7ffeb03928ad9f7  STD-02-rust-architecture-and-errors/checks.md
 4bfd9638959a48aa82c216429eade228f3cfd67d62489901f34fc39c5f125d19  STD-02-rust-architecture-and-errors/exemplars.md
 66be9b3e7034566b184831f92754d2dd10dfc74287a1e816973b51e10ffa523d  STD-02-rust-architecture-and-errors/why.md
 a4cad47f367dda9cd30e4fc78c54c4a85d1be8dd2565c1941ab32ad183f82b3e  STD-03-concurrency-and-process-safety/CHANGELOG.md
@@ -19,4 +19,4 @@ f915a76d1bda404a09b7663db6ed5338817b481259659c900f1a06081b5e2619  STD-03-concurr
 231d8eac3b1188c64453b64bc2e62bede5a826e8e351089fc1961ba315511b93  STD-05-security-boundaries/checks.md
 e33b4921c3ea4a1fd043420a0cff75e5fd45c6e058e7a137779a90d302d87a32  STD-05-security-boundaries/exemplars.md
 a224ffacc747d5eb7a8af3b30a647c68f5f2becabfeafa1c19f6ef65616f9e86  STD-05-security-boundaries/why.md
-e08e8384ea91605bddb7b1fde2041c823baf07c5fd300c6c0cb927e03ae2e175  check.sh
+67091dde4a9cc573d198581987ead65fbe5ce65469ee0cc425f06d49b36c2dbd  check.sh

@@ -20,7 +20,7 @@ deviate: read it first. `why.md` explains each rule, `checks.md` names the gate 
 enforces it, `exemplars.md` points at worked examples in Orbit, and `CHANGELOG.md`
 records its versions.
 
-Source: the constellation umbrella `docs/standards/` at commit `1c9e7e77b593c501f7decd0d286adcee523c7809`.
+Source: the constellation umbrella `docs/standards/` at commit `fdf1a65bbe67e94c4a2f4648010a44ad12214e4d`.
 
 ## Normative
 
