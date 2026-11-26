@@ -1,9 +1,11 @@
 //! `serve_stdio` on a real standard input: it returns when the input
 //! closes. The test runs this binary again as the server, with piped
 //! standard input and output.
-#![allow(clippy::expect_used, clippy::unwrap_used)]
 
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "this test binary uses only part of the shared fixture"
+)]
 mod fixture;
 
 use cw_app::Runtime;

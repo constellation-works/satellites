@@ -1,5 +1,4 @@
 //! The protocol on the wire: raw JSON-RPC lines over an in-memory stream.
-#![allow(clippy::expect_used, clippy::unwrap_used)]
 
 mod fixture;
 

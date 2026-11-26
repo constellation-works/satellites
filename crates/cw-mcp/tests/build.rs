@@ -1,7 +1,9 @@
 //! What building a server refuses.
-#![allow(clippy::expect_used, clippy::unwrap_used)]
 
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "this test binary uses only part of the shared fixture"
+)]
 mod fixture;
 
 use cw_app::Runtime;

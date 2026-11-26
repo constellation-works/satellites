@@ -60,7 +60,6 @@ fn fail(runtime: &Runtime<Calls>, _: &Origin, input: FailInput) -> Result<Value,
     })
 }
 
-#[allow(clippy::panic)]
 fn explode(runtime: &Runtime<Calls>, _: &Origin, _: NoInput) -> Result<Value, Error> {
     count(runtime);
     panic!("the fixture panicked on purpose");
@@ -77,6 +76,10 @@ pub fn tools() -> Vec<Tool<Calls>> {
 }
 
 /// The fixture server over a temp root, and its call counter.
+#[expect(
+    clippy::expect_used,
+    reason = "fixture setup: a failure here is a broken fixture, not the case under test"
+)]
 pub fn server(root: &std::path::Path) -> (Server<Calls>, Calls) {
     let calls = Calls::default();
     let info = ServerInfo::new("fixture", "1.2.3", PANIC_CODE);
@@ -86,6 +89,10 @@ pub fn server(root: &std::path::Path) -> (Server<Calls>, Calls) {
 }
 
 /// A harness on the fixture server, through the handshake as `client`.
+#[expect(
+    clippy::expect_used,
+    reason = "fixture setup: a failure here is a broken fixture, not the case under test"
+)]
 pub fn started(root: &std::path::Path, client: &str) -> (Harness, Calls, Value) {
     let (server, calls) = server(root);
     let mut harness = Harness::start(server).expect("the server starts");

@@ -1,6 +1,5 @@
 //! A session that ends while a tool is still running: the server returns
 //! within its bounded shutdown instead of waiting for the tool.
-#![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use cw_app::Runtime;
 use cw_mcp::testing::Harness;

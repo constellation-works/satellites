@@ -1,7 +1,6 @@
 //! Failures on the wire: a failed tool is a normal result marked as an
 //! error; a request the server cannot route is a protocol error and runs
 //! nothing; a panic is a failed tool and the server goes on.
-#![allow(clippy::expect_used, clippy::unwrap_used)]
 
 mod fixture;
 

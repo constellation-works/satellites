@@ -1,0 +1,5 @@
+# STD-02 R13: tests may unwrap and expect. Clippy applies these to #[test]
+# functions and #[cfg(test)] code. A shared helper that is not a test (for
+# example crates/cw-mcp/tests/fixture) carries its own reasoned expect.
+allow-expect-in-tests = true
+allow-unwrap-in-tests = true

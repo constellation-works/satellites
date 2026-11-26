@@ -91,7 +91,10 @@ fn run(runtime: &Runtime<State>, origin: &Origin, command: Command) -> Result<Va
     let (result, warning) = exec::<Tally>(runtime, origin, command).settle();
     if let Some(warning) = warning {
         // Standard output carries the protocol; a warning goes to stderr.
-        #[allow(clippy::print_stderr)]
+        #[expect(
+            clippy::print_stderr,
+            reason = "the surface prints the audit warning; stdout carries the protocol"
+        )]
         {
             eprintln!("warning: {warning}");
         }

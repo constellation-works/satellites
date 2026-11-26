@@ -5,7 +5,10 @@ use cw_cli::{Error, Exit, Format, Probe, Sink, Table, Terminal};
 use std::io::{self, Write};
 
 /// The example program, so its own command path runs against a closed reader.
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "this test runs the example's list path, not its main"
+)]
 #[path = "../examples/notes.rs"]
 mod notes;
 
