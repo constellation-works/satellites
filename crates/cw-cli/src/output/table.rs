@@ -12,7 +12,7 @@
 //! its line or reach the terminal as control.
 
 use super::escape::escape;
-use super::style::Role;
+use super::style::{Color, Role};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// The narrowest a truncatable column shrinks to, unless its header is
@@ -174,7 +174,7 @@ impl Table {
     /// nothing, not a lone header: stdout stays empty for a query that
     /// matched nothing (STD-01 R16), and the line saying so is the caller's,
     /// on stderr.
-    pub(crate) fn render(&self, width: Option<usize>, color: bool) -> String {
+    pub(crate) fn render(&self, width: Option<usize>, color: Color) -> String {
         if self.rows.is_empty() {
             return String::new();
         }
@@ -189,7 +189,7 @@ impl Table {
         let mut out = String::new();
         self.push_line(&mut out, &widths, &header, false);
         for row in &body {
-            self.push_line(&mut out, &widths, row, color);
+            self.push_line(&mut out, &widths, row, color.is_on());
         }
         out
     }
@@ -262,7 +262,7 @@ impl Table {
         {
             let text = truncate(text, width);
             let pad = " ".repeat(width.saturating_sub(text.width()));
-            let painted = role.paint(&text, color);
+            let painted = role.paint(&text, Color::of(color));
             match column.align {
                 Align::Right => {
                     out.push_str(&pad);

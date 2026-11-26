@@ -136,6 +136,32 @@ pub(super) fn decode(path: &Path, number: usize, bytes: &[u8]) -> Result<Record>
     serde_json::from_value(value).map_err(corrupt)
 }
 
+/// Whether `tail` holds the whole log file or the cut end of a longer one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum TailScope {
+    /// `tail` is the whole file; its first line starts at the file start.
+    WholeFile,
+    /// `tail` is cut from a longer file; its first line may start mid-line.
+    Cut,
+}
+
+impl TailScope {
+    /// `true` (the whole file) as [`TailScope::WholeFile`], else [`TailScope::Cut`].
+    pub(super) fn of(whole_file: bool) -> Self {
+        if whole_file {
+            Self::WholeFile
+        } else {
+            Self::Cut
+        }
+    }
+}
+
+impl From<bool> for TailScope {
+    fn from(whole_file: bool) -> Self {
+        Self::of(whole_file)
+    }
+}
+
 /// The format of the newest line in `tail`, the last bytes of a log, whose
 /// format can be read.
 ///
@@ -143,23 +169,29 @@ pub(super) fn decode(path: &Path, number: usize, bytes: &[u8]) -> Result<Record>
 /// or whole JSON missing only its line break) counts like any other. A line
 /// whose format cannot be read (malformed, blank) is skipped, never trusted,
 /// so it cannot hide an older line in a newer format. The first line of
-/// `tail` is read only when `tail` is the whole file (`whole_file`);
+/// `tail` is read only when `scope` is [`TailScope::WholeFile`];
 /// otherwise it may start mid-line and is skipped.
 ///
 /// `Ok(None)` when `tail` is the whole file and no line has a readable
 /// format (a corrupt line is the reader's to report, not a reason to stop
 /// logging); `Err(())` when `tail` is cut from a longer file and no line in
 /// it has a readable format, so the newest format is unknown.
-pub(super) fn newest_format(tail: &[u8], whole_file: bool) -> std::result::Result<Option<u32>, ()> {
+pub(super) fn newest_format(tail: &[u8], scope: TailScope) -> std::result::Result<Option<u32>, ()> {
     let mut lines = tail.split(|&b| b == b'\n').rev().peekable();
     while let Some(line) = lines.next() {
         let is_first = lines.peek().is_none();
-        if is_first && !whole_file {
-            break;
+        if is_first {
+            match scope {
+                TailScope::WholeFile => {}
+                TailScope::Cut => break,
+            }
         }
         if let Ok(probe) = serde_json::from_slice::<Probe>(line) {
             return Ok(Some(probe.format.get()));
         }
     }
-    if whole_file { Ok(None) } else { Err(()) }
+    match scope {
+        TailScope::WholeFile => Ok(None),
+        TailScope::Cut => Err(()),
+    }
 }

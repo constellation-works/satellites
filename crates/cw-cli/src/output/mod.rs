@@ -24,7 +24,7 @@ mod style;
 mod table;
 
 pub use escape::escape;
-pub use style::Role;
+pub use style::{Color, Role};
 pub use table::{Align, Cell, Column, Table};
 
 use crate::error::{Error, Result};
@@ -114,7 +114,9 @@ impl<O: Write, E: Write> Sink<O, E> {
     ) -> Result<()> {
         let text = match self.terminal.mode() {
             Mode::Json => json(payload)?,
-            Mode::Table => human(payload).render(self.terminal.width(), self.terminal.color()),
+            Mode::Table => {
+                human(payload).render(self.terminal.width(), Color::of(self.terminal.color()))
+            }
             Mode::Plain => human(payload).render_plain(),
         };
         self.write_out(&text);
@@ -205,7 +207,7 @@ impl<O: Write, E: Write> Sink<O, E> {
     /// [`Sink::notice`] does. For several lines, see [`Sink::warn_lines`].
     /// Never fails.
     pub fn warn(&mut self, text: &str) {
-        let prefix = Role::Warn.paint("warning:", self.terminal.stderr_color());
+        let prefix = Role::Warn.paint("warning:", Color::of(self.terminal.stderr_color()));
         let _ = writeln!(self.err, "{prefix} {}", escape(text));
     }
 

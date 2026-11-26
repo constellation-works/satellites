@@ -1,6 +1,6 @@
 //! The log file: appended under its own lock, read within a cap.
 
-use super::line::{Record, decode, encode, newest_format};
+use super::line::{Record, TailScope, decode, encode, newest_format};
 use crate::error::Error;
 use crate::error::Result;
 use cw_fs::{Cap, Lock};
@@ -130,7 +130,7 @@ impl AuditLog {
 /// its newest line with a readable format is in a newer format, or when no
 /// such line is in a tail cut from a longer file.
 fn check_newest(path: &std::path::Path, tail: &[u8], whole_file: bool) -> Result<()> {
-    match newest_format(tail, whole_file) {
+    match newest_format(tail, TailScope::of(whole_file)) {
         Ok(Some(found)) if found > super::FORMAT => Err(Error::NewerLog {
             path: path.to_path_buf(),
             found,

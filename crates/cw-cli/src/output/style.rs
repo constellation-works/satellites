@@ -23,6 +23,39 @@ pub enum Role {
     Neutral,
 }
 
+/// Whether colour escapes may be emitted.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Color {
+    /// Emit colour escapes where a role has them.
+    On,
+    /// Plain text, never wrapped in escapes.
+    #[default]
+    Off,
+}
+
+impl Color {
+    /// `true` (colour allowed) as [`Color::On`], else [`Color::Off`].
+    #[must_use]
+    pub fn of(enabled: bool) -> Self {
+        if enabled { Self::On } else { Self::Off }
+    }
+
+    /// Whether escapes may be emitted.
+    #[must_use]
+    pub fn is_on(self) -> bool {
+        match self {
+            Self::On => true,
+            Self::Off => false,
+        }
+    }
+}
+
+impl From<bool> for Color {
+    fn from(enabled: bool) -> Self {
+        Self::of(enabled)
+    }
+}
+
 impl Role {
     /// The SGR parameters for the role, or `None` for plain text.
     fn sgr(self) -> Option<&'static str> {
@@ -39,12 +72,15 @@ impl Role {
     /// `text` in this role's colour when `color` is on, else as it is.
     /// Blank text is never wrapped, so padding stays plain.
     #[must_use]
-    pub fn paint(self, text: &str, color: bool) -> String {
+    pub fn paint(self, text: &str, color: Color) -> String {
         match self.sgr() {
-            Some(code) if color && !text.trim().is_empty() => {
-                format!("\x1b[{code}m{text}\x1b[0m")
-            }
-            Some(_) | None => text.to_owned(),
+            Some(code) => match color {
+                Color::On if !text.trim().is_empty() => {
+                    format!("\x1b[{code}m{text}\x1b[0m")
+                }
+                Color::On | Color::Off => text.to_owned(),
+            },
+            None => text.to_owned(),
         }
     }
 }

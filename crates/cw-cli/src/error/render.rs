@@ -7,7 +7,7 @@
 //! `hint` (`null` when there is none), so a script reads the fix as a field.
 
 use super::Exit;
-use crate::output::{Role, Sink};
+use crate::output::{Color, Role, Sink};
 use crate::terminal::Mode;
 use serde::Serialize;
 use std::error::Error as _;
@@ -38,7 +38,7 @@ impl<O: Write, E: Write> Sink<O, E> {
                 let _ = writeln!(self.err);
             }
         } else {
-            let color = self.terminal().stderr_color();
+            let color = Color::of(self.terminal().stderr_color());
             let prefix = Role::Error.paint("error:", color);
             let _ = writeln!(self.err, "{prefix} {}", crate::output::escape(&message));
             if let Some(hint) = hint {
