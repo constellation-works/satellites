@@ -1,4 +1,4 @@
-.PHONY: help build test hostile-env-test fmt fmt-check clippy doc deny standards-check dependency-direction mcp-private-runtime ci-fast ci-lint ci clean
+.PHONY: help build test hostile-env-test fmt fmt-check clippy doc deny standards-check architecture-map dependency-direction mcp-private-runtime ci-fast ci-lint ci clean
 
 CARGO ?= cargo
 # Every build uses the committed Cargo.lock as is; a stale lock fails instead
@@ -29,11 +29,12 @@ endef
 help:
 	@echo "satellites make targets"
 	@echo ""
-	@echo "  make ci-fast          Pre-handoff gate, no compile: fmt, standards-check, dependency-direction, mcp-private-runtime"
+	@echo "  make ci-fast          Pre-handoff gate, no compile: fmt, standards-check, architecture-map, dependency-direction, mcp-private-runtime"
 	@echo "  make ci-lint          clippy -D warnings, rustdoc -D warnings, cargo-deny (skipped locally if not installed)"
 	@echo "  make test             All tests (nextest when installed, else cargo test) + doctests"
 	@echo "  make hostile-env-test The tests under a hostile HOME, TMPDIR and XDG_*"
 	@echo "  make standards-check  Run the vendored standards check (docs/standards/check.sh)"
+	@echo "  make architecture-map    Check ARCHITECTURE.md maps every crate and top-level module"
 	@echo "  make dependency-direction  Check which kit crates each crate may depend on"
 	@echo "  make mcp-private-runtime   Check that cw-mcp's public API names no rmcp or tokio type"
 	@echo "  make ci               Everything above; what CI runs"
@@ -95,6 +96,14 @@ standards-check:
 		echo "warning: standards not vendored (no docs/standards/check.sh); skipping." >&2; \
 	fi
 
+# ARCHITECTURE.md maps every crate and top-level module, every path it
+# names exists, and every unit has a doc comment (STD-02 R43). No compile.
+# Invoked directly so its bash shebang runs (like the template's structure
+# target): sh on some runners is dash, where the script's crate glob cannot
+# run and the gate would silently skip.
+architecture-map:
+	./scripts/check-architecture-map.sh
+
 # The kit crates depend on each other only as the script's table allows,
 # cw-base names no file, environment or process API, and cw-cli asks about
 # terminal state only in src/terminal/. No compile.
@@ -107,7 +116,7 @@ mcp-private-runtime:
 	sh scripts/check-mcp-private-runtime.sh
 
 # Pre-handoff gate for agents: no compile (STD-04 R12).
-ci-fast: fmt-check standards-check dependency-direction mcp-private-runtime
+ci-fast: fmt-check standards-check architecture-map dependency-direction mcp-private-runtime
 
 ci-lint: clippy doc deny
 
