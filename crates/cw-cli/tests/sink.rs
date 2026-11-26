@@ -160,6 +160,34 @@ fn control_characters_in_a_value_are_escaped() -> TestResult {
 }
 
 #[test]
+fn notice_and_warn_escape_every_control_character() -> TestResult {
+    let hostile = "path\nforged error: boom\r\ttab\u{1b}[31m";
+    let escaped = "path\\nforged error: boom\\r\\ttab\\u{1b}[31m";
+    let mut sink = sink(Probe::piped(), None);
+    sink.notice(hostile);
+    sink.warn(hostile);
+    sink.finish()?;
+    assert_eq!(
+        String::from_utf8(sink.into_parts().1)?,
+        format!("{escaped}\nwarning: {escaped}\n")
+    );
+    Ok(())
+}
+
+#[test]
+fn multiline_stderr_needs_an_explicit_lines_call() -> TestResult {
+    let mut sink = sink(Probe::piped(), None);
+    sink.notice_lines(["first\nline", "second\rline"]);
+    sink.warn_lines(["first\nline", "second\rline"]);
+    sink.finish()?;
+    assert_eq!(
+        String::from_utf8(sink.into_parts().1)?,
+        "first\\nline\nsecond\\rline\nwarning: first\\nline\nwarning: second\\rline\n"
+    );
+    Ok(())
+}
+
+#[test]
 fn an_empty_list_writes_no_header_and_json_still_writes_its_array() -> TestResult {
     for (probe, format, expected) in [
         (Probe::terminal(None), None, ""),

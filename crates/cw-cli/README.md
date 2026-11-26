@@ -13,8 +13,9 @@ snapshot `cw_app::Env::capture()` took.
 | `Format` | `auto`, `table` or `json`: a `clap::ValueEnum` for the program's `--format` flag |
 | `Sink::stdio(terminal)` / `Sink::new(terminal, out, err)` | The only path to stdout and stderr |
 | `sink.emit(&payload, to_table)` | One payload, rendered as a borderless table, tab-separated lines or one JSON document |
-| `sink.emit_text(&payload, to_text)` | The same for a detail view that is not a list |
-| `sink.notice(text)` / `sink.warn(text)` | A line on stderr, in every mode |
+| `sink.emit_text(&payload, to_text)` | The same for a detail view that is not a list; escapes except line breaks and tabs |
+| `sink.notice(text)` / `sink.warn(text)` | One escaped line on stderr, in every mode |
+| `sink.notice_lines(lines)` / `sink.warn_lines(lines)` | One escaped line per entry on stderr, the only multi-line stderr |
 | `sink.finish()` | Flush stdout once the command is done; a closed reader is success |
 | `sink.report(&error, hint)` | A `cw_base::Error` on stderr, and the `Exit` its kind calls for |
 | `exit_code(kind)` | 2 for `Kind::Usage`, 1 for every other kind |
@@ -47,8 +48,16 @@ asks, and `scripts/check-dependency-direction.sh` fails when one does.
 - A list with no records writes nothing to stdout in a table or piped (no lone header) and
   `[]` in JSON; the line on stderr naming what was searched is the program's.
 - Piped, the same rows are tab-separated lines with no header.
-- Every control character in a value is written as a visible escape (`\n`, `\t`, `\u{1b}`),
-  so a value cannot break its line or reach the terminal as control. JSON escapes its own.
+- Every control character in a value is written as a visible escape (`\n`, `\t`, `\r`,
+  else `\u{...}`), so a value cannot break its line or reach the terminal as control.
+  JSON escapes its own.
+- `notice`, `warn` and `report` escape every control character in their text the same
+  way (`\n`, `\t`, `\r`, else `\u{...}`): a line feed, carriage return, tab or ESC in
+  the argument comes out escaped, never as control, so a value cannot forge a second
+  `error:` or `warning:` line. Several stderr lines need `notice_lines`/`warn_lines`,
+  one escaped line per entry; passing raw text with a line feed never writes two lines.
+  `emit_text` instead keeps line breaks and tabs for the detail view and escapes the
+  rest.
 - Colour is one of six roles (`Role`): ok, warn, error, active, muted, neutral, each a basic
   16-colour code. The program maps its values onto roles in one table of its own.
 - **A closed stdout** (`tool list | head -1`) latches the sink shut: later writes do

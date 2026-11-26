@@ -119,17 +119,41 @@ impl<O: Write, E: Write> Sink<O, E> {
         Ok(())
     }
 
-    /// Write one line to stderr, escaped: progress, a count, the line naming
-    /// what an empty query searched. Never fails.
+    /// Write one line to stderr, with every control character escaped
+    /// (`\n`, `\t`, `\r`, else `\u{...}`), so the text cannot break into a
+    /// second line that reads as the program's own. For several lines, see
+    /// [`Sink::notice_lines`]. Never fails.
     pub fn notice(&mut self, text: &str) {
-        let _ = writeln!(self.err, "{}", escape_text(text));
+        let _ = writeln!(self.err, "{}", escape(text));
+    }
+
+    /// Write several lines to stderr, each escaped as [`Sink::notice`] does,
+    /// one line per entry. This is the only way to write a multi-line
+    /// notice: a line feed in [`Sink::notice`] comes out as `\n`, never as a
+    /// line break. Never fails.
+    pub fn notice_lines(&mut self, lines: impl IntoIterator<Item = impl AsRef<str>>) {
+        for line in lines {
+            self.notice(line.as_ref());
+        }
     }
 
     /// Write `warning: <text>` to stderr, the prefix coloured where stderr
-    /// is. Never fails.
+    /// is, with every control character in `text` escaped as
+    /// [`Sink::notice`] does. For several lines, see [`Sink::warn_lines`].
+    /// Never fails.
     pub fn warn(&mut self, text: &str) {
         let prefix = Role::Warn.paint("warning:", self.terminal.stderr_color());
-        let _ = writeln!(self.err, "{prefix} {}", escape_text(text));
+        let _ = writeln!(self.err, "{prefix} {}", escape(text));
+    }
+
+    /// Write each of `lines` as its own `warning: <line>` line, each escaped
+    /// as [`Sink::warn`] does. This is the only way to write a multi-line
+    /// warning: a line feed in [`Sink::warn`] comes out as `\n`, never as a
+    /// line break. Never fails.
+    pub fn warn_lines(&mut self, lines: impl IntoIterator<Item = impl AsRef<str>>) {
+        for line in lines {
+            self.warn(line.as_ref());
+        }
     }
 
     /// Whether stdout has stopped reaching a reader: a command with nothing
