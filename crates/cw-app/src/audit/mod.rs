@@ -7,11 +7,15 @@
 //!
 //! - **Identifiers only.** A line carries the command name, the record it
 //!   acted on or was aimed at, the outcome, the stable error code, the
-//!   surface and the actor: never an argument value or an error message,
-//!   which can hold the data itself or a path. The actor is what the client
-//!   claimed and the target is what the app supplied, so each is written
-//!   only when it reads as an identifier ([`ACTOR_PLACEHOLDER`] and
-//!   [`TARGET_PLACEHOLDER`] otherwise).
+//!   surface, the self-reported actor and the host's `euid`: never an
+//!   argument value or an error message, which can hold the data itself or a
+//!   path. The self-reported actor is what the client claimed and the target
+//!   is what the app supplied, so each is written only when it reads as an
+//!   identifier ([`ACTOR_PLACEHOLDER`] and [`TARGET_PLACEHOLDER`] otherwise).
+//! - **Host identity.** Each line records the effective user ID of the process
+//!   that wrote it, stamped at write time, so no caller's value is kept. It
+//!   sits beside the self-reported actor, which is never used as identity.
+//!   Windows has no user ID here: its lines record `euid` as `null`.
 //! - **The target is known before the command runs.** An app may resolve the
 //!   id of the record a command is aimed at ([`crate::App::subject`]); the
 //!   started line carries it, and the outcome line keeps it on failure, so
@@ -45,6 +49,7 @@
 //!   closed before the next record, so that record stays whole.
 
 mod actor;
+mod host;
 mod identifier;
 mod itemized;
 mod line;

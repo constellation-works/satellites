@@ -2,9 +2,11 @@
 //! older one.
 //!
 //! Formats 1 through 3 held a single record per command. Format 4 adds a
-//! phase and pairs the two lines of a write-ahead record by ID.
+//! phase and pairs the two lines of a write-ahead record by ID. Format 5
+//! names the client's claim `self_reported_actor` and adds the host's `euid`.
 
 use super::actor::recorded as recorded_actor;
+use super::host;
 use super::target::recorded as recorded_target;
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -14,7 +16,7 @@ use std::path::Path;
 
 /// The newest line format, the one every new line is written in. Bumped,
 /// with an upgrade step appended, whenever a line's shape changes.
-pub const FORMAT: u32 = 4;
+pub const FORMAT: u32 = 5;
 
 /// One step: a line of format `n` in, the same line in format `n + 1` out.
 type Upgrade = fn(&mut Map<String, Value>);
@@ -22,7 +24,7 @@ type Upgrade = fn(&mut Map<String, Value>);
 /// The upgrade steps, append-only: `UPGRADES[i]` turns format `i + 1` into
 /// format `i + 2`, so `FORMAT` is always `UPGRADES.len() + 1`. A shipped
 /// step is never edited, reordered or removed.
-const UPGRADES: [Upgrade; 3] = [add_actor, add_surface, add_phase];
+const UPGRADES: [Upgrade; 4] = [add_actor, add_surface, add_phase, name_claim];
 
 const _: () = assert!(UPGRADES.len() as u64 + 1 == FORMAT as u64);
 
@@ -39,6 +41,15 @@ fn add_surface(line: &mut Map<String, Value>) {
 /// Format 3 to 4. Each older line is a complete record on its own.
 fn add_phase(line: &mut Map<String, Value>) {
     line.insert("phase".to_owned(), Value::String("standalone".to_owned()));
+}
+
+/// Format 4 to 5: the client's claim, which format 4 wrote as `actor`, is
+/// `self_reported_actor`. No host identity was recorded on an older line, so
+/// its `euid` is unknown.
+fn name_claim(line: &mut Map<String, Value>) {
+    let claim = line.remove("actor").unwrap_or(Value::Null);
+    line.entry("self_reported_actor").or_insert(claim);
+    line.entry("euid").or_insert(Value::Null);
 }
 
 /// How an audited command ended.
@@ -62,9 +73,16 @@ pub struct Record {
     /// The surface it came through, such as `cli` or `mcp`; `None` on a line
     /// written before the surface was recorded.
     pub surface: Option<String>,
-    /// Who the client said it was, when it said; [`super::ACTOR_PLACEHOLDER`]
-    /// when that was not an identifier.
-    pub actor: Option<String>,
+    /// Who the client said it was, when it said: a claim, never identity.
+    /// [`super::ACTOR_PLACEHOLDER`] when that was not an identifier. `None`
+    /// when the client named nothing. A line in format 4 or older kept its
+    /// claim as `actor`, which reads under this name.
+    pub self_reported_actor: Option<String>,
+    /// The effective user ID of the host process that wrote the line,
+    /// stamped at write time: a value the caller passes in is replaced. `None`
+    /// where the platform has no user ID (Windows), and on a line written
+    /// before format 5 recorded it.
+    pub euid: Option<u32>,
     /// The command's name, such as `note add`.
     pub command: String,
     /// How it ended.
@@ -115,15 +133,18 @@ struct Probe {
 
 /// `record` as one newline-terminated JSON line in the newest format.
 ///
-/// The actor and the target are each written only when they read as an
-/// identifier, and as [`super::ACTOR_PLACEHOLDER`] or
-/// [`super::TARGET_PLACEHOLDER`] otherwise, whoever built the record.
+/// The self-reported actor and the target are each written only when they read
+/// as an identifier, and as [`super::ACTOR_PLACEHOLDER`] or
+/// [`super::TARGET_PLACEHOLDER`] otherwise, whoever built the record. `euid`
+/// is stamped from the host here, so the record's own value never reaches the
+/// line.
 pub(super) fn encode(record: &Record, phase: &Phase) -> Result<Vec<u8>> {
     let guarded = Record {
-        actor: record
-            .actor
+        self_reported_actor: record
+            .self_reported_actor
             .as_deref()
             .map(|actor| recorded_actor(actor).to_owned()),
+        euid: host::euid(),
         target: record
             .target
             .as_deref()

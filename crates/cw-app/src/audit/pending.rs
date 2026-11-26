@@ -73,7 +73,8 @@ impl Pending {
                 .map_err(Error::from)
                 .map_err(start_error)?,
             surface: Some(origin.surface().as_str().to_owned()),
-            actor: origin.actor().map(str::to_owned),
+            self_reported_actor: origin.actor().map(str::to_owned),
+            euid: None,
             command: meta.command().to_owned(),
             status: Status::Unknown,
             target: subject,

@@ -113,7 +113,8 @@ test_support/
 
 Owns the one path from any surface to a program's commands: the context a
 command runs in, the environment captured once, and an append-only audit
-log. May import `cw-base` and `cw-fs`.
+log. May import `cw-base` and `cw-fs`, and `rustix` for the host's effective
+user ID (`audit/host.rs`, Unix only).
 
 ```
 audit/
@@ -124,7 +125,8 @@ testing.rs
 ```
 
 - `audit/` — the audit log: one line per mutating command, or one pair per
-  item of an itemized command.
+  item of an itemized command. Each line carries the host's effective user ID
+  beside the self-reported actor.
 - `env/` — the process environment, read once.
 - `error/` — what this crate fails with.
 - `exec/` — the chokepoint: the one path from any surface to a program's

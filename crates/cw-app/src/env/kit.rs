@@ -40,10 +40,10 @@ pub const HOME: EnvVar = EnvVar::global(
     "The home directory; the default data directory is under it.",
 );
 
-/// The user the environment claims, recorded as the actor.
+/// The user the environment claims, recorded as the self-reported actor.
 pub const USER: EnvVar = EnvVar::global(
     "USER",
-    "The user the environment claims, recorded as the actor; a claim, not an identity.",
+    "The user the environment claims, recorded as the self-reported actor; a claim, not an identity.",
 );
 
 /// The fallback for the claimed user, on every platform.

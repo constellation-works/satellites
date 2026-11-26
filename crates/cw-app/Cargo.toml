@@ -10,7 +10,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# cw-app depends on cw-base and cw-fs only (scripts/check-dependency-direction.sh).
+# cw-app depends on cw-base and cw-fs among the kit crates (scripts/check-dependency-direction.sh).
 [dependencies]
 cw-base.workspace = true
 cw-fs.workspace = true
@@ -19,6 +19,11 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 time.workspace = true
+
+# The host's effective user ID, stamped on each audit line (src/audit/host.rs). Unix only;
+# elsewhere a line records `euid` as null.
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

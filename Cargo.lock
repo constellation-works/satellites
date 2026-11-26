@@ -150,6 +150,7 @@ dependencies = [
  "cw-base",
  "cw-fs",
  "getrandom",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

@@ -1,6 +1,11 @@
 //! An itemized command: zero or many started and outcome pairs, admitted
 //! inside its transaction and settled after the reply.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "itemized fixture: reads the raw log bytes to check them on disk, and makes the log path a directory to refuse the append"
+)]
+
 use cw_app::testing::exec_admitting;
 use cw_app::{
     App, AuditLog, AuditMeta, Ctx, Error as AuditError, Item, Origin, Runtime, Status, Surface,
@@ -152,7 +157,7 @@ fn n_items_write_n_started_lines_then_n_outcomes_after_the_reply() -> TestResult
     assert_eq!(first.status, Status::Success);
     assert_eq!(first.target.as_deref(), Some("s-1"));
     assert_eq!(first.error_code, None);
-    assert_eq!(first.actor.as_deref(), Some("agent-7"));
+    assert_eq!(first.self_reported_actor.as_deref(), Some("agent-7"));
     assert_eq!(first.surface.as_deref(), Some("mcp"));
     assert!(first.duration_ms.is_some());
     assert_eq!(second.status, Status::Failure);
@@ -242,7 +247,7 @@ fn failing_with_nothing_admitted_writes_one_standalone_failure_line() -> TestRes
     assert_eq!(record.status, Status::Failure);
     assert_eq!(record.error_code.as_deref(), Some("store_busy"));
     assert_eq!(record.target, None);
-    assert_eq!(record.actor.as_deref(), Some("agent-7"));
+    assert_eq!(record.self_reported_actor.as_deref(), Some("agent-7"));
     Ok(())
 }
 

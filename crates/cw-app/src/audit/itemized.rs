@@ -231,7 +231,8 @@ impl Live {
         Record {
             at: at.to_owned(),
             surface: Some(self.surface.clone()),
-            actor: self.actor.clone(),
+            self_reported_actor: self.actor.clone(),
+            euid: None,
             command: self.command.to_owned(),
             status: Status::Unknown,
             target: None,

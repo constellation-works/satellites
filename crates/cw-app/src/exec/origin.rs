@@ -25,7 +25,7 @@ impl Surface {
 
 /// The surface a command came through and what the client said about
 /// itself. Its audit line records both: the surface, and the client as the
-/// actor.
+/// self-reported actor, beside the host's `euid`.
 ///
 /// A command line names the user the environment claims ([`crate::Env::user`]);
 /// an MCP server names the client from its handshake. The actor is a claim,

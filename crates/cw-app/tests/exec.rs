@@ -197,7 +197,7 @@ fn a_mutating_command_writes_two_lines_of_identifiers_with_the_same_id() -> Test
     assert_eq!(record.status, Status::Success);
     assert_eq!(record.error_code, None);
     assert!(record.duration_ms.is_some());
-    assert_eq!(record.actor.as_deref(), Some("agent-7"));
+    assert_eq!(record.self_reported_actor.as_deref(), Some("agent-7"));
     assert_eq!(record.surface.as_deref(), Some("mcp"));
     Ok(())
 }
@@ -230,7 +230,7 @@ fn a_failed_command_logs_its_code_never_its_message_or_arguments() -> TestResult
     assert_eq!(record.status, Status::Failure);
     assert_eq!(record.error_code.as_deref(), Some("note_missing"));
     assert_eq!(record.target, None);
-    assert_eq!(record.actor.as_deref(), Some("agent-7"));
+    assert_eq!(record.self_reported_actor.as_deref(), Some("agent-7"));
     assert_eq!(record.surface.as_deref(), Some("mcp"));
     Ok(())
 }
@@ -396,13 +396,23 @@ fn an_actor_that_is_not_an_identifier_is_never_written_verbatim() -> TestResult 
         panic!("one readable line expected, got {lines:?}");
     };
     assert_eq!(
-        record.actor.as_deref(),
+        record.self_reported_actor.as_deref(),
         Some(cw_app::audit::ACTOR_PLACEHOLDER)
     );
 
+    // The claim is not identity: a claim that is not an identifier leaves the
+    // host's euid on the line, the file owner's uid.
+    #[cfg(unix)]
+    assert_eq!(
+        record.euid,
+        Some(rustix::fs::stat(runtime.audit_log().path())?.st_uid)
+    );
+    #[cfg(not(unix))]
+    assert_eq!(record.euid, None);
+
     // The same rule holds for a record appended to the log directly.
     let mut direct = record.clone();
-    direct.actor = Some(claim);
+    direct.self_reported_actor = Some(claim);
     runtime
         .audit_log()
         .append(&direct, std::time::Duration::from_secs(1))?;
@@ -413,7 +423,7 @@ fn an_actor_that_is_not_an_identifier_is_never_written_verbatim() -> TestResult 
         panic!("two readable lines expected, got {lines:?}");
     };
     assert_eq!(
-        appended.actor.as_deref(),
+        appended.self_reported_actor.as_deref(),
         Some(cw_app::audit::ACTOR_PLACEHOLDER)
     );
     Ok(())
@@ -449,7 +459,7 @@ fn a_torn_last_line_does_not_swallow_the_next_record() -> TestResult {
     };
     assert_eq!(first.target.as_deref(), Some("n-1"));
     assert_eq!(new.target.as_deref(), Some("n-1"));
-    assert_eq!(new.actor.as_deref(), Some("agent-7"));
+    assert_eq!(new.self_reported_actor.as_deref(), Some("agent-7"));
     Ok(())
 }
 

@@ -12,7 +12,7 @@ commands and command-specific error codes.
 | `AuditMeta::itemized` | A command that writes zero or many records: nothing is written before `run`; it admits its items through `ctx.audit().admit(items)` inside its transaction |
 | `Finished` | Render the result, then call `settle()` to append the outcome. An outcome append error comes back as an `AuditWarning` |
 | `Runtime<S>` / `Ctx<'_, S>` | What the program built at start, and the borrowed view a command runs against: state, clock, origin |
-| `Origin`, `Surface` | The surface (`cli`, `mcp`) and what the client said about itself, recorded as the actor |
+| `Origin`, `Surface` | The surface (`cli`, `mcp`) and what the client said about itself, recorded as the self-reported actor beside the host's `euid` |
 | `Env::capture()` | The only read of the process environment; `Env::from_vars` for tests |
 | `EnvVar`, `KIT_VARS`, `env::table(app, own)` | One declaration per variable read; the kit's own list; the Markdown usage table of both |
 | `env.app(name).data_dir(explicit)` | Explicit root, else `<APP>_ROOT`, else `$HOME/.<app>`; a pure function of the captured value |
@@ -84,11 +84,18 @@ ctx.audit().admit(items)?;   // Item::wrote(subject) or Item::refused(subject, "
 
 ## The audit log
 
-- **Identifiers only.** A line holds the time, surface, actor, command name, status,
-  target, stable error code and duration: never an argument value or an error message.
-  The actor is the client's claim, recorded only when it is an identifier (at most 64 bytes
-  of ASCII letters, digits and `.` `_` `-` `@` `+` `:` `/`), else as `<invalid>`. The target
-  is the app's, under the same rule (at most 128 bytes), else `<invalid>`.
+- **Identifiers only.** A line holds the time, surface, self-reported actor, host `euid`,
+  command name, status, target, stable error code and duration: never an argument value or an
+  error message. The self-reported actor is the client's claim, recorded only when it is an
+  identifier (at most 64 bytes of ASCII letters, digits and `.` `_` `-` `@` `+` `:` `/`), else
+  as `<invalid>`. The target is the app's, under the same rule (at most 128 bytes), else
+  `<invalid>`.
+- **Host identity.** Each line records `euid`, the effective user ID of the process that
+  wrote it, stamped at write time: a value a caller passes in is replaced. It sits beside
+  `self_reported_actor`, which is a claim and never identity. `euid` names the account the
+  process runs as, so clients that run as one user share it; it says which account wrote a
+  line, not which client did. On Windows there is no user ID here, and `euid` is `null` on
+  every line: a recorded gap, so a Windows line has no host-derived identity.
 - **The target is known before the command runs.** An app may implement `App::subject`: the
   id of the record a mutating command is aimed at, resolved against its own state (a read,
   before the started line; `None` by default). The started line carries it as the target and
@@ -102,16 +109,25 @@ ctx.audit().admit(items)?;   // Item::wrote(subject) or Item::refused(subject, "
   returns a warning and preserves the command's result. The reader pairs lines by ID and
   returns one record per command in start order. A start with no outcome has `Status::Unknown`
   and no duration. A completed record reports its duration in `Record::duration_ms` as `Some`.
-- **Versioned.** Format 4 adds `phase`, with `started` and `outcome` lines sharing an `id`.
-  Formats 1 through 3 upgrade to standalone records, as do direct `AuditLog::append` calls
-  when written in format 4. A newer line is refused in its place while other lines are read.
-  A torn last line is left out by the reader and closed with a line break by the next append.
-  An append reads the last 64 KiB under the lock and refuses a log whose newest readable
-  format is newer than this build or cannot be found in a tail cut from a longer log.
+- **Versioned.** Format 5 names the claim `self_reported_actor` (format 4 wrote it as `actor`)
+  and adds `euid`. Format 4 adds `phase`, with `started` and `outcome` lines sharing an `id`.
+  Formats 1 through 4 upgrade through their declared steps; direct `AuditLog::append` calls
+  are written in the newest format. A newer line is refused in its place while other lines
+  are read. A torn last line is left out by the reader and closed with a line break by the
+  next append. An append reads the last 64 KiB under the lock and refuses a log whose newest
+  readable format is newer than this build or cannot be found in a tail cut from a longer log.
+- **Existing logs.** A line in formats 1 through 4 reads as before, with its claim under the
+  new name: `actor` reads as `self_reported_actor`, and `euid` reads as `None`, because no
+  host identity was recorded for it. Nothing is rewritten; new lines are appended to the same
+  file in format 5. A build that writes format 4 refuses to append once the log's newest
+  readable line is format 5, and it reads a format 5 line as `NewerFormat`, so it never mixes
+  its lines into the log. `Record::actor` is now `Record::self_reported_actor`, a rename of a
+  public field: a reader that names `actor` must change.
 
-For the next `rust-cli-template` pin, account for `Status::Unknown` and the optional
-`Record::duration_ms` in readers. Builds that write format 3 refuse to append once the log
-contains a format 4 line as its newest readable line.
+For the next `rust-cli-template` pin, account for `Status::Unknown`, the optional
+`Record::duration_ms`, `Record::self_reported_actor` and `Record::euid` in readers. Builds
+that write format 3 refuse to append once the log contains a format 4 line as its newest
+readable line; builds that write format 4 refuse once it contains a format 5 line.
 
 Read the log back using only `cw_app` paths, including its byte cap:
 
