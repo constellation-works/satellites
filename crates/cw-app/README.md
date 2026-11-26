@@ -2,14 +2,14 @@
 
 The one path from any surface (a command line, an MCP server) to a program's commands: the
 context a command runs in, the environment captured once, and an append-only audit log.
-Mechanism only: it is generic over what the program built at start and names no store,
-record, command or error code.
+The crate is generic over what the program built at start, including its store, records,
+commands and command-specific error codes.
 
 | Item | What it does |
 |---|---|
 | `App` | What a program supplies once: its state, commands, outcome and error; which commands are audited, how to run one, what an outcome acted on |
-| `exec::<A>(runtime, origin, command)` | The chokepoint: starts the audit record, runs the command, translates its error into `cw_base::Error` once, returns a `Finished` |
-| `Finished` | The result and the pending audit record: render the result, then `settle()`; a failure to write the line comes back as an `AuditWarning` value |
+| `exec::<A>(runtime, origin, command)` | Appends a started line before running a mutating command, then returns a `Finished` |
+| `Finished` | Render the result, then call `settle()` to append the outcome. An outcome append error comes back as an `AuditWarning` |
 | `Runtime<S>` / `Ctx<'_, S>` | What the program built at start, and the borrowed view a command runs against: state, clock, origin |
 | `Origin`, `Surface` | The surface (`cli`, `mcp`) and what the client said about itself, recorded as the actor |
 | `Env::capture()` | The only read of the process environment; `Env::from_vars` for tests |
@@ -26,8 +26,11 @@ let (_result, warning) = finished.settle();
 if let Some(warning) = warning { eprintln!("warning: {warning}") }
 ```
 
-- A command whose `App::audit` returns `Some` gets its record before it runs, starting as a
-  failure, so a panic is still logged as one. A record dropped without `settle` still writes.
+- A command whose `App::audit` returns `Some` runs only after the started line is appended
+  and synced. If the append fails, `Finished::result` returns `audit_start_failed` with
+  the typed `cw_app::Error` cause. An ID generation failure returns `audit_id_failed`.
+- After rendering, `settle` appends the outcome with the same ID. Dropping a pending
+  outcome still attempts to append it if the command returned.
 - A read-only command (`None`) creates no file and takes no lock.
 - The app's typed error reaches the caller as `cw_base::Error` with the app's kind and code,
   and the typed cause is recoverable with `downcast_ref`.
@@ -42,14 +45,20 @@ if let Some(warning) = warning { eprintln!("warning: {warning}") }
   of ASCII letters, digits and `.` `_` `-` `@` `+` `:` `/`), else as `<invalid>`.
 - **Its own lock.** Appends go through `cw_fs::append` under `<root>/.audit.lock`, never a
   program's own lock, so a command that timed out on that lock still records its failure.
-- **Fails open.** A line that cannot be written never fails the command; the crate prints
-  and logs nothing, and hands the failure to the surface as a warning.
-- **Versioned.** Every line carries `format` (now 3). Formats 1 (no actor) and 2 (no
-  surface) are read through declared upgrade steps; a newer line is refused in its place
-  while the other lines are read. A torn last line is left out by the reader, and closed with a
-  line break by the next append so that record stays whole. An append reads the log's last
-  64 KiB (`cw_fs::read_tail`) under the lock and refuses a log whose newest line is newer than
-  this build writes, or cannot be found there; the refusal is the surface's warning.
+- **Write-ahead.** A started append failure stops the command. An outcome append failure
+  returns a warning and preserves the command's result. The reader pairs lines by ID and
+  returns one record per command in start order. A start with no outcome has `Status::Unknown`
+  and no duration. A completed record reports its duration in `Record::duration_ms` as `Some`.
+- **Versioned.** Format 4 adds `phase`, with `started` and `outcome` lines sharing an `id`.
+  Formats 1 through 3 upgrade to standalone records, as do direct `AuditLog::append` calls
+  when written in format 4. A newer line is refused in its place while other lines are read.
+  A torn last line is left out by the reader and closed with a line break by the next append.
+  An append reads the last 64 KiB under the lock and refuses a log whose newest readable
+  format is newer than this build or cannot be found in a tail cut from a longer log.
+
+For the next `rust-cli-template` pin, account for `Status::Unknown` and the optional
+`Record::duration_ms` in readers. Builds that write format 3 refuse to append once the log
+contains a format 4 line as its newest readable line.
 
 Read the log back using only `cw_app` paths, including its byte cap:
 
@@ -57,8 +66,8 @@ Read the log back using only `cw_app` paths, including its byte cap:
 use cw_app::{AuditLog, Cap};
 
 let log = AuditLog::new(root);
-for line in log.read(Cap::bytes(1 << 20))? {
-    let record = line?;
+for record in log.read(Cap::bytes(1 << 20))? {
+    let record = record?;
     println!("{} {:?}", record.command, record.status);
 }
 ```

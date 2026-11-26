@@ -1,4 +1,4 @@
-//! A command's result, with its audit record still to write.
+//! A command's result, with its audit outcome still to write.
 
 use crate::audit::{AuditWarning, Pending};
 
@@ -7,7 +7,7 @@ use crate::audit::{AuditWarning, Pending};
 ///
 /// The surface renders the result first ([`Finished::result`], or the
 /// owned result from [`Finished::into_parts`]), then settles the record, so
-/// the audit line follows the output and a failure to write it reaches the
+/// the audit outcome follows the output and a failure to write it reaches the
 /// surface as an [`AuditWarning`] value to print after the output.
 #[must_use = "render the result, then settle the audit record"]
 #[derive(Debug)]
@@ -26,13 +26,13 @@ impl<O> Finished<O> {
         self.result.as_ref()
     }
 
-    /// Whether the command is audited: `false` for a read-only command.
+    /// Whether a started audit line was written for the command.
     #[must_use]
     pub fn is_audited(&self) -> bool {
         self.audit.is_audited()
     }
 
-    /// Write the audit line and hand back the result with any warning.
+    /// Write the audit outcome and hand back the result with any warning.
     pub fn settle(self) -> (Result<O, cw_base::Error>, Option<AuditWarning>) {
         let warning = self.audit.settle();
         (self.result, warning)

@@ -24,6 +24,7 @@ cw-mcp = { path = "crates/cw-mcp", version = "0.1.0" }
 # cw-cli builds clap without `color` and `wrap_help`: both make clap ask the
 # terminal on its own, and cw-cli makes that decision once (STD-01 R17).
 clap = { version = "4.6", default-features = false, features = ["std", "help", "usage", "error-context", "suggestions"] }
+getrandom = "0.4"
 # cw-mcp's MCP SDK and its private runtime. Neither appears in a public signature.
 rmcp = { version = "3.9", default-features = false, features = ["client", "server", "transport-io"] }
 # cw-sqlite builds its own SQLite and re-exports rusqlite, so a project names one version.

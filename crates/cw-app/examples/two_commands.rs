@@ -139,8 +139,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Add(3),
         Command::Show,
     ] {
+        // A mutating command runs only after its started line is synced.
         let finished = exec::<Tally>(&runtime, &origin, command);
-        // Render first, then settle the audit record.
+        // Render the result, then settle the audit outcome.
         match finished.result() {
             Ok(total) => writeln!(out, "tally: {total}")?,
             Err(error) => writeln!(out, "error[{}]: {error}", error.code())?,
@@ -151,9 +152,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    writeln!(out, "audit log:")?;
-    for line in runtime.audit_log().read(Cap::bytes(1 << 20))? {
-        let record = line?;
+    writeln!(out, "audited commands:")?;
+    // The reader pairs lines by ID and shows Unknown for a start alone.
+    for record in runtime.audit_log().read(Cap::bytes(1 << 20))? {
+        let record = record?;
         writeln!(
             out,
             "  {} {:?} target={:?} code={:?}",

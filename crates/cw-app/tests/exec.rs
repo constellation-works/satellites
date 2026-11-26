@@ -79,8 +79,72 @@ fn pinned() -> Result<Clock, cw_base::TimestampError> {
     )?))
 }
 
+struct WriteNote;
+
+impl App for WriteNote {
+    type State = AuditLog;
+    type Command = ();
+    type Outcome = usize;
+    type Error = Error;
+
+    fn audit((): &()) -> Option<AuditMeta> {
+        Some(AuditMeta::new("note write"))
+    }
+
+    fn run(ctx: &Ctx<'_, AuditLog>, (): ()) -> Result<usize, Error> {
+        let log = ctx.state();
+        let records_at_entry = log.read(Cap::bytes(1 << 16));
+        cw_fs::write_atomic(&log.root().join("note"), b"changed")
+            .map_err(|error| Error::new(error.kind(), "note_write_failed", error))?;
+        records_at_entry
+            .map(|records| records.len())
+            .map_err(|error| Error::new(error.kind(), "note_audit_read_failed", error))
+    }
+
+    fn target(_: &usize) -> Option<String> {
+        None
+    }
+}
+
 #[test]
-fn a_mutating_command_writes_one_line_of_identifiers_only() -> TestResult {
+fn the_started_line_is_visible_from_inside_the_command() -> TestResult {
+    let (_scratch, root) = data_dir()?;
+    cw_fs::create_private_dir(&root)?;
+    let runtime = Runtime::new(&root, AuditLog::new(&root));
+
+    let finished = exec::<WriteNote>(&runtime, &origin(), ());
+    assert_eq!(finished.result().ok().copied(), Some(1));
+    assert_eq!(std::fs::read(root.join("note"))?, b"changed");
+    assert!(finished.settle().1.is_none());
+    Ok(())
+}
+
+#[test]
+fn a_failed_started_append_leaves_command_data_untouched() -> TestResult {
+    let (_scratch, root) = data_dir()?;
+    cw_fs::create_private_dir(&root)?;
+    let path = root.join("note");
+    cw_fs::write_atomic(&path, b"original")?;
+    let log = AuditLog::new(&root);
+    std::fs::create_dir(log.path())?;
+    let runtime = Runtime::new(&root, log);
+
+    let finished = exec::<WriteNote>(&runtime, &origin(), ());
+    assert_eq!(std::fs::read(path)?, b"original");
+    let (result, warning) = finished.settle();
+    let error = result.expect_err("a failed started append must stop the command");
+    assert_eq!(error.kind(), Kind::Refused);
+    assert_eq!(error.code(), "audit_start_failed");
+    assert!(matches!(
+        error.downcast_ref::<AuditError>(),
+        Some(AuditError::Fs(_))
+    ));
+    assert!(warning.is_none());
+    Ok(())
+}
+
+#[test]
+fn a_mutating_command_writes_two_lines_of_identifiers_with_the_same_id() -> TestResult {
     let (_scratch, root) = data_dir()?;
     let runtime = Runtime::new(&root, ()).with_clock(pinned()?);
 
@@ -91,13 +155,34 @@ fn a_mutating_command_writes_one_line_of_identifiers_only() -> TestResult {
             body: SECRET_ARG.to_owned(),
         },
     );
+    let lines = runtime.audit_log().read(Cap::bytes(1 << 16))?;
+    let [Ok(started)] = lines.as_slice() else {
+        panic!("one started command expected, got {lines:?}");
+    };
+    assert_eq!(started.status, Status::Unknown);
+    assert_eq!(started.target, None);
+    assert_eq!(started.error_code, None);
+    assert_eq!(started.duration_ms, None);
+
     let (result, warning) = finished.settle();
     assert_eq!(result?.as_deref(), Some("n-27"));
     assert!(warning.is_none());
 
     let text = std::fs::read_to_string(runtime.audit_log().path())?;
-    assert_eq!(text.lines().count(), 1);
     assert!(!text.contains(SECRET_ARG));
+    let physical_lines: Vec<serde_json::Value> = text
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()?;
+    let [started, outcome] = physical_lines.as_slice() else {
+        panic!("expected two physical lines, got {physical_lines:?}");
+    };
+    assert_eq!(started["format"], cw_app::audit::FORMAT);
+    assert_eq!(started["phase"], "started");
+    assert_eq!(outcome["phase"], "outcome");
+    assert!(started["id"].as_str().is_some_and(|id| !id.is_empty()));
+    assert_eq!(started["id"], outcome["id"]);
+
     let lines = runtime.audit_log().read(Cap::bytes(1 << 16))?;
     let [Ok(record)] = lines.as_slice() else {
         panic!("one readable line expected, got {lines:?}");
@@ -106,6 +191,7 @@ fn a_mutating_command_writes_one_line_of_identifiers_only() -> TestResult {
     assert_eq!(record.target.as_deref(), Some("n-27"));
     assert_eq!(record.status, Status::Success);
     assert_eq!(record.error_code, None);
+    assert!(record.duration_ms.is_some());
     assert_eq!(record.actor.as_deref(), Some("agent-7"));
     assert_eq!(record.surface.as_deref(), Some("mcp"));
     Ok(())
@@ -128,7 +214,7 @@ fn a_failed_command_logs_its_code_never_its_message_or_arguments() -> TestResult
     assert!(warning.is_none());
 
     let text = std::fs::read_to_string(runtime.audit_log().path())?;
-    assert_eq!(text.lines().count(), 1);
+    assert_eq!(text.lines().count(), 2);
     assert!(!text.contains(SECRET_ARG));
     assert!(!text.contains(SECRET_MESSAGE));
     let lines = runtime.audit_log().read(Cap::bytes(1 << 16))?;
@@ -189,29 +275,58 @@ fn an_app_error_reaches_the_caller_with_its_kind_code_and_typed_cause() -> TestR
 }
 
 #[test]
-fn a_failure_to_write_the_line_is_returned_as_a_warning() -> TestResult {
+fn a_failed_outcome_append_warns_and_the_start_reads_as_unknown() -> TestResult {
+    use std::time::Duration;
+
     let (_scratch, root) = data_dir()?;
     cw_fs::create_private_dir(&root)?;
-    // A directory where the log should be: the append is refused.
-    std::fs::create_dir(root.join(cw_app::audit::FILE))?;
-    let runtime = Runtime::new(&root, ());
+    let log = AuditLog::new(&root);
+    let runtime = Runtime::new(&root, log.clone()).with_audit_wait(Duration::ZERO);
 
-    let finished = exec::<Notes>(
-        &runtime,
-        &origin(),
-        Command::Add {
-            body: "x".to_owned(),
-        },
-    );
-    // The command's own result is untouched by the audit failure.
-    assert!(finished.result().is_ok());
+    let finished = exec::<WriteNote>(&runtime, &origin(), ());
+    assert_eq!(std::fs::read(root.join("note"))?, b"changed");
+    // Holding the lock on this thread refuses reentry during settle.
+    let _lock = cw_fs::Lock::acquire(&log.lock_path(), "test", Duration::ZERO)?;
+
     let (result, warning) = finished.settle();
-    assert!(result.is_ok());
+    assert_eq!(result?, 1);
     let Some(warning) = warning else {
         return Err("the failed append was expected to come back as a warning".into());
     };
-    assert_eq!(warning.command(), "note add");
-    assert_eq!(warning.error().kind(), Kind::Refused);
+    assert_eq!(warning.command(), "note write");
+    assert!(matches!(
+        warning.error(),
+        AuditError::Fs(cw_fs::Error::Reentrant { .. })
+    ));
+
+    let records = log.read(Cap::bytes(1 << 16))?;
+    let [Ok(record)] = records.as_slice() else {
+        panic!("one unfinished command expected, got {records:?}");
+    };
+    assert_eq!(record.status, Status::Unknown);
+    assert_eq!(record.command, "note write");
+    assert_eq!(record.duration_ms, None);
+    Ok(())
+}
+
+#[test]
+fn interleaved_commands_pair_by_id_in_start_order() -> TestResult {
+    let (_scratch, root) = data_dir()?;
+    let runtime = Runtime::new(&root, ()).with_clock(pinned()?);
+    let first = exec::<Notes>(&runtime, &origin(), Command::Add { body: "a".into() });
+    let second = exec::<Notes>(&runtime, &origin(), Command::Add { body: "bb".into() });
+    assert!(second.settle().1.is_none());
+    // An unsettled but completed command still writes its known outcome on drop.
+    drop(first);
+
+    let records = runtime.audit_log().read(Cap::bytes(1 << 16))?;
+    let [Ok(first), Ok(second)] = records.as_slice() else {
+        panic!("two paired commands expected, got {records:?}");
+    };
+    assert_eq!(first.at, second.at);
+    assert_eq!(first.command, second.command);
+    assert_eq!(first.target.as_deref(), Some("n-1"));
+    assert_eq!(second.target.as_deref(), Some("n-2"));
     Ok(())
 }
 
@@ -366,21 +481,18 @@ fn a_log_in_a_newer_format_is_not_appended_to() -> TestResult {
             },
         )
         .settle();
-        // The command's result stands; the refusal is the warning.
-        assert!(result.is_ok(), "{case}");
-        let Some(warning) = warning else {
-            return Err(format!("{case}: the refused append was expected as a warning").into());
-        };
+        assert!(warning.is_none(), "{case}");
+        let error = result.expect_err("a newer log must stop the command before running");
         assert!(
             matches!(
-                warning.error(),
-                AuditError::NewerLog {
+                error.downcast_ref::<AuditError>(),
+                Some(AuditError::NewerLog {
                     found: 99,
                     supported: cw_app::audit::FORMAT,
                     ..
-                }
+                })
             ),
-            "{case}: {warning}"
+            "{case}: {error}"
         );
         assert_eq!(std::fs::read(log.path())?, content.as_bytes(), "{case}");
     }

@@ -1,9 +1,8 @@
 //! The persisted line: its fields, its format and the steps that upgrade an
 //! older one.
 //!
-//! Formats 1 and 2 are the earlier shapes of this line, which logs written
-//! before this crate already hold: format 1 had no actor, format 2 no
-//! surface. Reading them through the steps below keeps such a log readable.
+//! Formats 1 through 3 held a single record per command. Format 4 adds a
+//! phase and pairs the two lines of a write-ahead record by ID.
 
 use super::actor::recorded;
 use crate::error::{Error, Result};
@@ -14,7 +13,7 @@ use std::path::Path;
 
 /// The newest line format, the one every new line is written in. Bumped,
 /// with an upgrade step appended, whenever a line's shape changes.
-pub const FORMAT: u32 = 3;
+pub const FORMAT: u32 = 4;
 
 /// One step: a line of format `n` in, the same line in format `n + 1` out.
 type Upgrade = fn(&mut Map<String, Value>);
@@ -22,7 +21,7 @@ type Upgrade = fn(&mut Map<String, Value>);
 /// The upgrade steps, append-only: `UPGRADES[i]` turns format `i + 1` into
 /// format `i + 2`, so `FORMAT` is always `UPGRADES.len() + 1`. A shipped
 /// step is never edited, reordered or removed.
-const UPGRADES: [Upgrade; 2] = [add_actor, add_surface];
+const UPGRADES: [Upgrade; 3] = [add_actor, add_surface, add_phase];
 
 const _: () = assert!(UPGRADES.len() as u64 + 1 == FORMAT as u64);
 
@@ -36,17 +35,24 @@ fn add_surface(line: &mut Map<String, Value>) {
     line.entry("surface").or_insert(Value::Null);
 }
 
+/// Format 3 to 4. Each older line is a complete record on its own.
+fn add_phase(line: &mut Map<String, Value>) {
+    line.insert("phase".to_owned(), Value::String("standalone".to_owned()));
+}
+
 /// How an audited command ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
     /// The command completed.
     Success,
-    /// The command failed, or never reported how it ended (it panicked).
+    /// The command reported a failure.
     Failure,
+    /// A start was recorded and no outcome was recorded.
+    Unknown,
 }
 
-/// One audited command, as a line of the log holds it.
+/// One audited command, with its outcome when available.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Record {
@@ -66,16 +72,33 @@ pub struct Record {
     pub target: Option<String>,
     /// The stable error code, when it failed with one; never a message.
     pub error_code: Option<String>,
-    /// Wall time from start to result, in milliseconds.
-    pub duration_ms: u64,
+    /// Wall time from start to result, in milliseconds, when recorded.
+    pub duration_ms: Option<u64>,
 }
 
-/// A line as written: the record and its format.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "lowercase")]
+pub(super) enum Phase {
+    Standalone,
+    Started { id: String },
+    Outcome { id: String },
+}
+
 #[derive(Serialize)]
 struct Line<'a> {
     format: u32,
     #[serde(flatten)]
+    phase: &'a Phase,
+    #[serde(flatten)]
     record: &'a Record,
+}
+
+#[derive(Deserialize)]
+pub(super) struct DecodedLine {
+    #[serde(flatten)]
+    pub(super) phase: Phase,
+    #[serde(flatten)]
+    pub(super) record: Record,
 }
 
 /// The format number alone, read first so a newer line is refused by its
@@ -89,7 +112,7 @@ struct Probe {
 ///
 /// The actor is written only when it reads as an identifier, and as
 /// [`super::ACTOR_PLACEHOLDER`] otherwise, whoever built the record.
-pub(super) fn encode(record: &Record) -> Result<Vec<u8>> {
+pub(super) fn encode(record: &Record, phase: &Phase) -> Result<Vec<u8>> {
     let actor = record.actor.as_deref().map(recorded);
     let record = match actor {
         Some(actor) if Some(actor) != record.actor.as_deref() => &Record {
@@ -100,6 +123,7 @@ pub(super) fn encode(record: &Record) -> Result<Vec<u8>> {
     };
     let mut bytes = serde_json::to_vec(&Line {
         format: FORMAT,
+        phase,
         record,
     })
     .map_err(Error::Encode)?;
@@ -109,7 +133,7 @@ pub(super) fn encode(record: &Record) -> Result<Vec<u8>> {
 
 /// Read line `number` of the log at `path`, upgrading an older format and
 /// refusing a newer one.
-pub(super) fn decode(path: &Path, number: usize, bytes: &[u8]) -> Result<Record> {
+pub(super) fn decode(path: &Path, number: usize, bytes: &[u8]) -> Result<DecodedLine> {
     let corrupt = |source| Error::Corrupt {
         path: path.to_path_buf(),
         line: number,

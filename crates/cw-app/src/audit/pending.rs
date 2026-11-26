@@ -1,6 +1,6 @@
-//! The record of one command between its start and its line.
+//! The record of one command between its start and its outcome.
 
-use super::line::{Record, Status};
+use super::line::{Phase, Record, Status};
 use super::log::AuditLog;
 use super::meta::AuditMeta;
 use crate::error::{Error, Result};
@@ -9,14 +9,14 @@ use std::fmt;
 use std::time::{Duration, Instant};
 use time::OffsetDateTime;
 
-/// The audit record of one command, waiting to be written.
+/// The outcome of an audited command, waiting to be written.
 ///
 /// [`crate::exec()`] returns it inside a [`crate::Finished`]: the surface
 /// renders the command's result first, then calls [`Pending::settle`],
-/// which writes the line and hands back any failure as a warning to print.
-/// A record dropped without being settled (the command panicked, or a
-/// surface forgot) still writes its line, and a failure to do so is lost.
-/// A read-only command's record is empty and writes nothing.
+/// which writes the outcome and hands back any failure as a warning to print.
+/// Dropping an unsettled record still attempts to write a known outcome.
+/// A command that never returned leaves only its started line. Read-only
+/// commands and commands refused before starting have no pending outcome.
 #[must_use = "settle the record after rendering, so a failure to write it can be reported"]
 #[derive(Debug)]
 pub struct Pending {
@@ -27,48 +27,55 @@ pub struct Pending {
 struct Entry {
     log: AuditLog,
     wait: Duration,
-    at: OffsetDateTime,
     started: Instant,
-    took: Option<Duration>,
-    surface: &'static str,
-    actor: Option<String>,
     command: &'static str,
-    status: Status,
-    target: Option<String>,
-    error_code: Option<&'static str>,
+    outcome: Phase,
+    record: Record,
 }
 
 impl Pending {
-    /// A record for a read-only command: nothing to write.
+    /// No pending audit outcome.
     pub(crate) fn none() -> Self {
         Self { entry: None }
     }
 
-    /// Start the record of `meta`, begun at `at` through `origin`, to go to
-    /// `log`, waiting up to `wait` for the audit lock. Until marked, the
-    /// command reads as failed.
+    /// Write the started line before the command can run.
     pub(crate) fn start(
         log: AuditLog,
         wait: Duration,
         meta: AuditMeta,
         at: OffsetDateTime,
         origin: &Origin,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, cw_base::Error> {
+        let mut random = [0; 16];
+        getrandom::fill(&mut random).map_err(|error| {
+            cw_base::Error::new(cw_base::Kind::Internal, "audit_id_failed", error)
+        })?;
+        let id = format!("{:032x}", u128::from_be_bytes(random));
+        let record = Record {
+            at: cw_base::time::format_rfc3339(at)
+                .map_err(Error::from)
+                .map_err(start_error)?,
+            surface: Some(origin.surface().as_str().to_owned()),
+            actor: origin.actor().map(str::to_owned),
+            command: meta.command().to_owned(),
+            status: Status::Unknown,
+            target: None,
+            error_code: None,
+            duration_ms: None,
+        };
+        log.append_phase(&record, &Phase::Started { id: id.clone() }, wait)
+            .map_err(start_error)?;
+        Ok(Self {
             entry: Some(Entry {
                 log,
                 wait,
-                at,
                 started: Instant::now(),
-                took: None,
-                surface: origin.surface().as_str(),
-                actor: origin.actor().map(str::to_owned),
                 command: meta.command(),
-                status: Status::Failure,
-                target: None,
-                error_code: None,
+                outcome: Phase::Outcome { id },
+                record,
             }),
-        }
+        })
     }
 
     /// Record how the command ended: on success the record it acted on, if
@@ -77,35 +84,35 @@ impl Pending {
         let Some(entry) = self.entry.as_mut() else {
             return;
         };
-        entry.took = Some(entry.started.elapsed());
+        let record = &mut entry.record;
+        record.duration_ms =
+            Some(u64::try_from(entry.started.elapsed().as_millis()).unwrap_or(u64::MAX));
         match result {
             Ok(target) => {
-                entry.status = Status::Success;
-                entry.target = target;
-                entry.error_code = None;
+                record.status = Status::Success;
+                record.target = target;
             }
             Err(code) => {
-                entry.status = Status::Failure;
-                entry.target = None;
-                entry.error_code = Some(code);
+                record.status = Status::Failure;
+                record.error_code = Some(code.to_owned());
             }
         }
     }
 
-    /// Whether the command is audited: `false` for a read-only command.
+    /// Whether a started audit line was written for the command.
     #[must_use]
     pub fn is_audited(&self) -> bool {
         self.entry.is_some()
     }
 
-    /// Write the line, after the surface has rendered the result. A failure
+    /// Write the outcome after the surface has rendered the result. A failure
     /// comes back as the warning for the surface to print; it never fails
     /// the command, which already ran. `None` when the line was written or
     /// the command is not audited.
     #[must_use = "a failure to write the audit line is for the surface to print"]
     pub fn settle(mut self) -> Option<AuditWarning> {
         let entry = self.entry.take()?;
-        entry.write().err().map(|error| AuditWarning {
+        entry.write_outcome().err().map(|error| AuditWarning {
             command: entry.command,
             error,
         })
@@ -114,32 +121,29 @@ impl Pending {
 
 impl Drop for Pending {
     fn drop(&mut self) {
-        // Fail open, and never panic in a destructor: an unsettled record
-        // still writes its line, and a failure here has no one to tell.
+        // A surface may drop a known outcome before settling. The start on
+        // disk still records the attempt if the outcome cannot be written.
         if let Some(entry) = self.entry.take() {
-            let _ = entry.write();
+            let _ = entry.write_outcome();
         }
     }
 }
 
 impl Entry {
-    fn write(&self) -> Result<()> {
-        let took = self.took.unwrap_or_else(|| self.started.elapsed());
-        let record = Record {
-            at: cw_base::time::format_rfc3339(self.at)?,
-            surface: Some(self.surface.to_owned()),
-            actor: self.actor.clone(),
-            command: self.command.to_owned(),
-            status: self.status,
-            target: self.target.clone(),
-            error_code: self.error_code.map(str::to_owned),
-            duration_ms: u64::try_from(took.as_millis()).unwrap_or(u64::MAX),
-        };
-        self.log.append(&record, self.wait)
+    fn write_outcome(&self) -> Result<()> {
+        if self.record.status == Status::Unknown {
+            return Ok(());
+        }
+        self.log
+            .append_phase(&self.record, &self.outcome, self.wait)
     }
 }
 
-/// An audit line that could not be written: a warning for the surface to
+fn start_error(error: Error) -> cw_base::Error {
+    cw_base::Error::new(error.kind(), "audit_start_failed", error)
+}
+
+/// An audit outcome that could not be written. A warning for the surface to
 /// print, never a failure of the command.
 #[derive(Debug)]
 pub struct AuditWarning {
@@ -171,7 +175,7 @@ impl fmt::Display for AuditWarning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "the audit line for `{}` was not written: {}",
+            "the audit outcome for `{}` was not written: {}",
             self.command, self.error
         )
     }

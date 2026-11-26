@@ -21,14 +21,15 @@ use crate::audit::Pending;
 
 /// Run `command` of app `A` against `runtime`, for the client `origin`.
 ///
-/// A command [`App::audit`] declares mutating gets its audit record before
-/// it runs, so a panic is still logged as a failure; a read-only command
-/// gets none, and nothing is created or locked for it. The app's typed
-/// error crosses into [`cw_base::Error`] here, once, through its own
-/// translator.
+/// A command [`App::audit`] declares mutating runs only after its started
+/// line has been appended. If preparing or appending the line fails, the
+/// result contains `audit_start_failed` with a typed [`crate::Error`]
+/// cause, or `audit_id_failed` if an ID could not be generated. A read-only
+/// command creates no audit file and takes no audit lock. The app's typed
+/// error crosses into [`cw_base::Error`] through its own translator.
 ///
 /// The result comes back with the pending record in a [`Finished`]: the
-/// surface renders the result, then settles the record, so the line is
+/// surface renders the result, then settles the record, so the outcome is
 /// written after the output and a failure to write it reaches the surface
 /// as a warning value.
 pub fn exec<A: App>(
@@ -38,13 +39,16 @@ pub fn exec<A: App>(
 ) -> Finished<A::Outcome> {
     let ctx = runtime.ctx(origin);
     let mut audit = match A::audit(&command) {
-        Some(meta) => Pending::start(
+        Some(meta) => match Pending::start(
             runtime.audit_log().clone(),
             runtime.audit_wait(),
             meta,
             ctx.now(),
             origin,
-        ),
+        ) {
+            Ok(audit) => audit,
+            Err(error) => return Finished::new(Err(error), Pending::none()),
+        },
         None => Pending::none(),
     };
     let result = A::run(&ctx, command).map_err(Into::into);

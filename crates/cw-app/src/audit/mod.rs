@@ -1,9 +1,9 @@
-//! The audit log: one line per mutating command, in `<root>/audit.jsonl`.
+//! The append-only audit log in `<root>/audit.jsonl`.
 //!
 //! It answers "who changed this data, with what command, when, and did it
-//! work". [`crate::exec()`] starts a [`Pending`] record before a command an
-//! [`crate::App`] declares mutating, marks it with the outcome, and hands it
-//! to the surface, which settles it after rendering.
+//! work". [`crate::exec()`] appends a started line before running a command
+//! an [`crate::App`] declares mutating. The surface settles the [`Pending`]
+//! outcome after rendering, appending it under the same ID.
 //!
 //! - **Identifiers only.** A line carries the command name, the record it
 //!   acted on, the outcome, the stable error code, the surface and the
@@ -11,14 +11,15 @@
 //!   data itself or a path. The actor is what the client claimed, so it is
 //!   written only when it reads as an identifier ([`ACTOR_PLACEHOLDER`]
 //!   otherwise).
-//! - **A failure until told otherwise.** A record starts as a failure, so a
-//!   command that panics is logged as one; an outcome is never assumed.
+//! - **An explicit unknown outcome.** The reader pairs starts and outcomes
+//!   by ID. A start without an outcome reads as [`Status::Unknown`].
 //! - **Its own lock.** Lines are appended through [`cw_fs::append`] under
 //!   `<root>/.audit.lock`, never a program's own lock, so a command that
 //!   timed out waiting for the program's lock still records its failure.
-//! - **A side channel: it fails open.** A line that cannot be written never
-//!   fails the command that already ran; it comes back to the surface as an
-//!   [`AuditWarning`] value to print. This crate prints and logs nothing.
+//! - **The start is required.** If its append fails, `exec` returns the
+//!   error without running the command. Once the command has run, an
+//!   outcome append error reaches the surface as an [`AuditWarning`].
+//!   This crate prints and logs nothing.
 //! - **Versioned.** Each line carries its `format`; the reader upgrades an
 //!   older line through declared steps and refuses a newer one.
 //!   An append reads the log's newest line first and refuses a log in a

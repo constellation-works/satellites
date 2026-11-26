@@ -1,9 +1,11 @@
 //! The log file: appended under its own lock, read within a cap.
 
-use super::line::{Record, TailScope, decode, encode, newest_format};
+use super::line::{DecodedLine, Phase, Record, Status, TailScope, decode, encode, newest_format};
 use crate::error::Error;
 use crate::error::Result;
 use cw_fs::{Cap, Lock};
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -49,9 +51,9 @@ impl AuditLog {
         self.root.join(LOCK_FILE)
     }
 
-    /// Append `record` as one line in the newest format, creating the data
-    /// directory `0700` and the log `0600` when absent, and holding the
-    /// audit lock, waiting up to `wait` for it, so lines never interleave.
+    /// Append `record` as one standalone line in the newest format. This
+    /// creates the data directory `0700` and the log `0600` when absent and
+    /// waits up to `wait` for the audit lock so lines never interleave.
     ///
     /// Under the lock it reads the log's last 64 KiB first. A log whose
     /// newest line is in a format newer than this build writes is refused,
@@ -67,7 +69,16 @@ impl AuditLog {
     /// step fails, including the lock still held at the deadline;
     /// [`crate::Error::Encode`] when the line cannot be encoded.
     pub fn append(&self, record: &Record, wait: Duration) -> Result<()> {
-        let line = encode(record)?;
+        self.append_phase(record, &Phase::Standalone, wait)
+    }
+
+    pub(super) fn append_phase(
+        &self,
+        record: &Record,
+        phase: &Phase,
+        wait: Duration,
+    ) -> Result<()> {
+        let line = encode(record, phase)?;
         if !cw_fs::inspect_dir(&self.root)? {
             cw_fs::create_private_dir(&self.root)?;
         }
@@ -92,15 +103,15 @@ impl AuditLog {
         Ok(())
     }
 
-    /// Every line of the log, oldest first, provided the file holds at most
-    /// `cap` bytes. An absent log has no lines.
+    /// Audited commands in start order, provided the file holds at most
+    /// `cap` bytes. An absent log has no records. Each start is paired with
+    /// its outcome by ID. A start without an outcome has [`Status::Unknown`].
     ///
-    /// Each line is read on its own: a line that is not valid, or newer than
-    /// this build reads, is returned as its error in its place while the
-    /// rest are read. A last line without its newline was torn by a crash
-    /// during its append and is left out; blank lines are skipped. Reading
-    /// takes no lock: an append is one write, so a reader sees a line whole
-    /// or not at all.
+    /// A malformed or unsupported line, a second start with the same
+    /// pending ID, or an outcome without a matching start is returned as
+    /// a line error while the rest are read. The reader skips blank lines
+    /// and an unterminated last line. Reading takes no lock because an
+    /// append writes the line and its terminator together.
     ///
     /// # Errors
     ///
@@ -117,12 +128,60 @@ impl AuditLog {
             Some(end) => &bytes[..=end],
             None => &[][..],
         };
-        Ok(whole
-            .split(|&b| b == b'\n')
-            .enumerate()
-            .filter(|(_, line)| !line.iter().all(u8::is_ascii_whitespace))
-            .map(|(index, line)| decode(&path, index + 1, line))
-            .collect())
+        let mut records = Vec::new();
+        let mut starts = HashMap::new();
+        for (index, line) in whole.split(|&b| b == b'\n').enumerate() {
+            if line.iter().all(u8::is_ascii_whitespace) {
+                continue;
+            }
+            let number = index + 1;
+            match decode(&path, number, line) {
+                Ok(DecodedLine {
+                    phase: Phase::Standalone,
+                    record,
+                }) => records.push(Ok(record)),
+                Ok(DecodedLine {
+                    phase: Phase::Started { id },
+                    mut record,
+                }) => match starts.entry(id) {
+                    Entry::Vacant(start) => {
+                        start.insert(records.len());
+                        record.status = Status::Unknown;
+                        record.target = None;
+                        record.error_code = None;
+                        record.duration_ms = None;
+                        records.push(Ok(record));
+                    }
+                    Entry::Occupied(_) => {
+                        records.push(Err(invalid_pair(&path, number, "duplicate start ID")));
+                    }
+                },
+                Ok(DecodedLine {
+                    phase: Phase::Outcome { id },
+                    record,
+                }) => {
+                    if let Some(start) = starts.remove(&id) {
+                        records[start] = Ok(record);
+                    } else {
+                        records.push(Err(invalid_pair(
+                            &path,
+                            number,
+                            "outcome has no matching start",
+                        )));
+                    }
+                }
+                Err(error) => records.push(Err(error)),
+            }
+        }
+        Ok(records)
+    }
+}
+
+fn invalid_pair(path: &Path, line: usize, message: &str) -> Error {
+    Error::Corrupt {
+        path: path.to_path_buf(),
+        line,
+        source: serde::de::Error::custom(message),
     }
 }
 
