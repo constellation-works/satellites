@@ -45,6 +45,34 @@ pub struct Sink<O: Write = io::Stdout, E: Write = io::Stderr> {
     pub(crate) err: E,
 }
 
+/// One part of a detail view, optionally painted with a semantic role.
+///
+/// Line breaks and tabs retain their layout; other control characters are
+/// escaped before painting, just as in [`Sink::emit_text`].
+#[derive(Clone, Debug)]
+pub struct TextSpan {
+    text: String,
+    role: Role,
+}
+
+impl TextSpan {
+    /// A plain span of text.
+    #[must_use]
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            role: Role::Neutral,
+        }
+    }
+
+    /// Paint this span with `role` when stdout colour is enabled.
+    #[must_use]
+    pub fn role(mut self, role: Role) -> Self {
+        self.role = role;
+        self
+    }
+}
+
 impl Sink {
     /// A sink on the process's stdout and stderr.
     #[must_use]
@@ -110,6 +138,41 @@ impl<O: Write, E: Write> Sink<O, E> {
             Mode::Table | Mode::Plain => {
                 let mut text = escape_text(&human(payload)).into_owned();
                 if !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                text
+            }
+        };
+        self.write_out(&text);
+        Ok(())
+    }
+
+    /// Write a detail view made of spans, painting their roles when stdout
+    /// colour is enabled. JSON mode writes only `payload` and does not call
+    /// `human`. Human output ends in a line break, as with [`Sink::emit_text`].
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Encode`] when `payload` cannot be written as JSON.
+    pub fn emit_text_spans<T: Serialize + ?Sized>(
+        &mut self,
+        payload: &T,
+        human: impl FnOnce(&T) -> Vec<TextSpan>,
+    ) -> Result<()> {
+        let text = match self.terminal.mode() {
+            Mode::Json => json(payload)?,
+            Mode::Table | Mode::Plain => {
+                let spans = human(payload);
+                let mut text = String::new();
+                let mut ends_in_newline = false;
+                for span in spans {
+                    let escaped = escape_text(&span.text);
+                    if !escaped.is_empty() {
+                        ends_in_newline = escaped.ends_with('\n');
+                    }
+                    text.push_str(&span.role.paint(&escaped, self.terminal.color()));
+                }
+                if !ends_in_newline {
                     text.push('\n');
                 }
                 text

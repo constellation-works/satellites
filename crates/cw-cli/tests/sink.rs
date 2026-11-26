@@ -1,10 +1,36 @@
 //! The sink: stdout carries only the payload, and tables follow STD-01.
 
 use cw_app::Env;
-use cw_cli::{Cell, Column, Format, Probe, Sink, Table, Terminal};
+use cw_cli::{Cell, Column, Format, Probe, Role, Sink, Table, Terminal, TextSpan};
 use serde::Serialize;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+#[test]
+fn text_spans_escape_before_painting_and_respect_colour() -> TestResult {
+    for (probe, expected) in [
+        (
+            Probe::terminal(None),
+            "Priority: \x1b[33mhigh\\u{1b}[31m\x1b[0m\n",
+        ),
+        (Probe::piped(), "Priority: high\\u{1b}[31m\n"),
+    ] {
+        let mut sink = sink(probe, None);
+        sink.emit_text_spans(&"high\x1b[31m", |value| {
+            vec![
+                TextSpan::new("Priority: "),
+                TextSpan::new(*value).role(Role::Warn),
+            ]
+        })?;
+        sink.finish()?;
+        assert_eq!(String::from_utf8(sink.into_parts().0)?, expected);
+    }
+    let mut sink = sink(Probe::piped(), Some(Format::Json));
+    sink.emit_text_spans(&"value", |_| panic!("JSON must not build spans"))?;
+    sink.finish()?;
+    assert_eq!(String::from_utf8(sink.into_parts().0)?, "\"value\"\n");
+    Ok(())
+}
 
 #[derive(Serialize)]
 struct Note {

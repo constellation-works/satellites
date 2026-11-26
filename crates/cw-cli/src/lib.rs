@@ -48,5 +48,5 @@ pub mod terminal;
 
 pub use error::{Error, Exit, Result, exit_code};
 pub use logging::Logging;
-pub use output::{Align, Cell, Column, Role, Sink, Table, escape};
+pub use output::{Align, Cell, Column, Role, Sink, Table, TextSpan, escape};
 pub use terminal::{Format, Mode, Probe, Terminal};

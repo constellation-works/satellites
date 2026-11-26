@@ -14,6 +14,7 @@ snapshot `cw_app::Env::capture()` took.
 | `Sink::stdio(terminal)` / `Sink::new(terminal, out, err)` | The only path to stdout and stderr |
 | `sink.emit(&payload, to_table)` | One payload, rendered as a borderless table, tab-separated lines or one JSON document |
 | `sink.emit_text(&payload, to_text)` | The same for a detail view that is not a list; escapes except line breaks and tabs |
+| `sink.emit_text_spans(&payload, to_spans)` | A detail view composed of `TextSpan`s, optionally coloured by `Role` |
 | `sink.notice(text)` / `sink.warn(text)` | One escaped line on stderr, in every mode |
 | `sink.notice_lines(lines)` / `sink.warn_lines(lines)` | One escaped line per entry on stderr, the only multi-line stderr |
 | `sink.finish()` | Flush stdout once the command is done; a closed reader is success |
@@ -58,6 +59,15 @@ asks, and `scripts/check-dependency-direction.sh` fails when one does.
   one escaped line per entry; passing raw text with a line feed never writes two lines.
   `emit_text` instead keeps line breaks and tabs for the detail view and escapes the
   rest.
+- `emit_text_spans` applies the same escaping to each span before painting its role;
+  JSON mode serializes the payload without calling the span builder. For example:
+
+  ```rust,ignore
+  sink.emit_text_spans(&note, |note| vec![
+      TextSpan::new("Priority: "),
+      TextSpan::new(&note.priority).role(Role::Warn),
+  ])?;
+  ```
 - Colour is one of six roles (`Role`): ok, warn, error, active, muted, neutral, each a basic
   16-colour code. The program maps its values onto roles in one table of its own.
 - **A closed stdout** (`tool list | head -1`) latches the sink shut: later writes do
