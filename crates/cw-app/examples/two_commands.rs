@@ -5,9 +5,8 @@
 //! temporary directory and removes it on exit.
 
 use cw_app::env::{EnvVar, table};
-use cw_app::{App, AuditMeta, Ctx, Env, Origin, Runtime, Surface, exec};
+use cw_app::{App, AuditMeta, Cap, Ctx, Env, Origin, Runtime, Surface, exec};
 use cw_base::{Error, Kind};
-use cw_fs::Cap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 

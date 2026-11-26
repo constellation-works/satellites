@@ -1,8 +1,7 @@
 //! Reading the audit log: older formats through their upgrade steps, a
 //! newer format refused.
 
-use cw_app::{AuditLog, Error, Status};
-use cw_fs::Cap;
+use cw_app::{AuditLog, Cap, Error, Status};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 

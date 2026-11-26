@@ -69,6 +69,8 @@ pub mod error;
 pub mod exec;
 
 pub use audit::{AuditLog, AuditMeta, AuditWarning, Pending, Record, Status};
+/// The byte limit accepted by [`AuditLog::read`].
+pub use cw_fs::Cap;
 pub use env::{AppEnv, Env, EnvVar};
 pub use error::{Error, Result};
 pub use exec::{App, Ctx, Finished, Origin, Runtime, Surface, exec};

@@ -51,6 +51,18 @@ if let Some(warning) = warning { eprintln!("warning: {warning}") }
   64 KiB (`cw_fs::read_tail`) under the lock and refuses a log whose newest line is newer than
   this build writes, or cannot be found there; the refusal is the surface's warning.
 
+Read the log back using only `cw_app` paths, including its byte cap:
+
+```rust,ignore
+use cw_app::{AuditLog, Cap};
+
+let log = AuditLog::new(root);
+for line in log.read(Cap::bytes(1 << 20))? {
+    let record = line?;
+    println!("{} {:?}", record.command, record.status);
+}
+```
+
 ## The environment
 
 `Env::capture()` is called once, in `main`. The presentation variables live in the same
