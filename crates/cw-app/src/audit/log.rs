@@ -78,13 +78,25 @@ impl AuditLog {
         phase: &Phase,
         wait: Duration,
     ) -> Result<()> {
-        let line = encode(record, phase)?;
+        self.append_lines(&[(record, phase)], wait)
+    }
+
+    /// Append every line in `lines`, in order, in one append under one hold
+    /// of the lock. An empty slice touches nothing.
+    pub(super) fn append_lines(&self, lines: &[(&Record, &Phase)], wait: Duration) -> Result<()> {
+        if lines.is_empty() {
+            return Ok(());
+        }
+        let mut encoded = Vec::new();
+        for (record, phase) in lines {
+            encoded.extend_from_slice(&encode(record, phase)?);
+        }
         if !cw_fs::inspect_dir(&self.root)? {
             cw_fs::create_private_dir(&self.root)?;
         }
         let _lock = Lock::acquire(&self.lock_path(), "audit append", wait)?;
         let path = self.path();
-        let mut bytes = Vec::with_capacity(line.len() + 1);
+        let mut bytes = Vec::with_capacity(encoded.len() + 1);
         if cw_fs::inspect_file(&path)? {
             // One byte past the window tells a file of exactly TAIL bytes,
             // read whole, from the cut end of a longer one.
@@ -98,7 +110,7 @@ impl AuditLog {
                 bytes.push(b'\n');
             }
         }
-        bytes.extend_from_slice(&line);
+        bytes.extend_from_slice(&encoded);
         cw_fs::append(&path, &bytes)?;
         Ok(())
     }

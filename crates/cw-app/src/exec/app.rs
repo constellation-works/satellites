@@ -20,7 +20,9 @@ pub trait App {
     type Error: Into<cw_base::Error>;
 
     /// What the audit log records for `command`, or `None` when it is
-    /// read-only and must not write.
+    /// read-only and must not write. [`AuditMeta::new`] is a command that
+    /// writes one record; [`AuditMeta::itemized`] one that writes zero or
+    /// many, and admits them through [`Ctx::audit`].
     fn audit(command: &Self::Command) -> Option<AuditMeta>;
 
     /// Run `command`: dispatch only. The audit record and the error
@@ -36,7 +38,8 @@ pub trait App {
 
     /// The id of the record `outcome` acted on, when it names one, for the
     /// audit line. On success it wins over [`App::subject`]: a command that
-    /// creates a record names the new id here.
+    /// creates a record names the new id here. Not called for an itemized
+    /// command: each item names its own subject.
     fn target(outcome: &Self::Outcome) -> Option<String>;
 
     /// The id of the record `command` is aimed at, resolved against the
@@ -44,7 +47,7 @@ pub trait App {
     /// The default is `None`.
     ///
     /// [`super::exec()`] calls it only for a command [`App::audit`] declares
-    /// mutating, before the started line is appended, so the line names the
+    /// mutating and not itemized, before the started line is appended, so the line names the
     /// record even when the command is refused or never returns. The
     /// outcome line keeps it when the command fails. It is a read: it
     /// must not change the store, and it cannot fail the command.

@@ -9,6 +9,7 @@ commands and command-specific error codes.
 |---|---|
 | `App` | What a program supplies once: its state, commands, outcome and error; which commands are audited, how to run one, what an outcome acted on, optionally which record a command is aimed at |
 | `exec::<A>(runtime, origin, command)` | Appends a started line before running a mutating command, then returns a `Finished` |
+| `AuditMeta::itemized` | A command that writes zero or many records: nothing is written before `run`; it admits its items through `ctx.audit().admit(items)` inside its transaction |
 | `Finished` | Render the result, then call `settle()` to append the outcome. An outcome append error comes back as an `AuditWarning` |
 | `Runtime<S>` / `Ctx<'_, S>` | What the program built at start, and the borrowed view a command runs against: state, clock, origin |
 | `Origin`, `Surface` | The surface (`cli`, `mcp`) and what the client said about itself, recorded as the actor |
@@ -16,6 +17,7 @@ commands and command-specific error codes.
 | `EnvVar`, `KIT_VARS`, `env::table(app, own)` | One declaration per variable read; the kit's own list; the Markdown usage table of both |
 | `env.app(name).data_dir(explicit)` | Explicit root, else `<APP>_ROOT`, else `$HOME/.<app>`; a pure function of the captured value |
 | `AuditLog` | `<root>/audit.jsonl`: append under its own lock, read within a cap |
+| `testing::exec_admitting` | A test helper that fails when an itemized command returns `Ok` having written without admitting |
 
 ## The chokepoint
 
@@ -36,6 +38,49 @@ if let Some(warning) = warning { eprintln!("warning: {warning}") }
   and the typed cause is recoverable with `downcast_ref`.
 - The clock and the actor a command sees come from its `Ctx`; a test pins the clock with
   `Runtime::with_clock(Clock::fixed(..))`.
+
+## Itemized commands
+
+A command declares one of three audits: none (`App::audit` returns `None`, read-only), single
+(`AuditMeta::new`, one record) or itemized (`AuditMeta::itemized`, zero or many). One hook
+invocation can write one record and refuse another, write several, or change nothing, yet it
+is one transaction and one reply. For an itemized command `exec` writes nothing before the run
+and never calls `App::subject` or `App::target`:
+
+```rust,ignore
+// Inside the command's transaction, after the last write and before the commit:
+ctx.audit().admit(items)?;   // Item::wrote(subject) or Item::refused(subject, "code")
+// ... commit ...
+```
+
+- `admit` gives each item its own 128-bit id and appends all the started lines in one append
+  under one hold of the audit lock. An `Err` (`audit_start_failed`, or `audit_id_failed`)
+  means nothing may commit: return it and roll back. It leaves no outcome line. A command
+  admits once; a second `admit` is `audit_admitted_twice`, and a command that is not itemized
+  gets `audit_not_itemized` (both kind `internal`). Admitting no items writes nothing and takes
+  no lock. A subject is guarded like any target: an identifier of at most 128 bytes, else `<invalid>`.
+- The kit keeps the `Batch`; the surface settles it after the reply, as it does `Finished`
+  for a single command. If `run` returned `Ok`, each item's outcome is what was admitted
+  (success, or failure with its refusal code), in one append. If `run` returned `Err`,
+  every item settles as a failure with the command's code, so a rolled-back write never
+  has a success line.
+- `Batch::committed()` is for a command whose commit is not its last fallible step: it
+  fixes the results and writes the outcome lines at once. A later settle adds none, and a
+  failed write there is the `AuditWarning` settle returns.
+- An itemized command that fails with nothing admitted writes one standalone failure line
+  with its code after the reply. One that succeeds with nothing admitted writes no line. After a
+  failed `admit` the log is left alone: no outcome and no standalone line.
+- `Finished::admitted()` is how many items were admitted. A `Ctx` built with `Ctx::new` has a
+  detached handle: `admit` writes nothing and succeeds, so a test can run one command's logic
+  without a log.
+- The kit cannot see the command's transaction, so nothing forces a call to `admit` before the
+  commit. `cw_app::testing::exec_admitting(runtime, origin, command, wrote)` runs the command
+  and panics when it is itemized, returned `Ok`, admitted nothing, and `wrote()` says the
+  store changed.
+- No format change: each item is an ordinary started and outcome pair, and `AuditLog::read`
+  pairs them by id. The started lines precede the commit rather than the run; the guarantee
+  is the same: no committed write lacks its audit line, and a failed start append refuses
+  the write.
 
 ## The audit log
 
@@ -120,6 +165,7 @@ own. It is not `#[non_exhaustive]`.
 
 ```sh
 cargo run -p cw-app --example two_commands
+cargo run -p cw-app --example itemized
 ```
 
 ## License

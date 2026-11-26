@@ -1,5 +1,6 @@
 //! The record of one command between its start and its outcome.
 
+use super::itemized::Live;
 use super::line::{Phase, Record, Status};
 use super::log::AuditLog;
 use super::meta::AuditMeta;
@@ -17,10 +18,19 @@ use time::OffsetDateTime;
 /// Dropping an unsettled record still attempts to write a known outcome.
 /// A command that never returned leaves only its started line. Read-only
 /// commands and commands refused before starting have no pending outcome.
+///
+/// An itemized command's record holds the outcomes of every item it
+/// admitted (none, when it admitted nothing).
 #[must_use = "settle the record after rendering, so a failure to write it can be reported"]
 #[derive(Debug)]
 pub struct Pending {
-    entry: Option<Entry>,
+    entry: Option<Owed>,
+}
+
+#[derive(Debug)]
+enum Owed {
+    Single(Box<Entry>),
+    Itemized(Box<Live>),
 }
 
 #[derive(Debug)]
@@ -39,6 +49,13 @@ impl Pending {
         Self { entry: None }
     }
 
+    /// The pending outcomes of an itemized command that has run.
+    pub(crate) fn itemized(live: Live) -> Self {
+        Self {
+            entry: Some(Owed::Itemized(Box::new(live))),
+        }
+    }
+
     /// Write the started line before the command can run. `subject` is the
     /// id of the record the command is aimed at, when the app resolved one;
     /// the started line carries it as the target.
@@ -50,11 +67,7 @@ impl Pending {
         at: OffsetDateTime,
         origin: &Origin,
     ) -> Result<Self, cw_base::Error> {
-        let mut random = [0; 16];
-        getrandom::fill(&mut random).map_err(|error| {
-            cw_base::Error::new(cw_base::Kind::Internal, "audit_id_failed", error)
-        })?;
-        let id = format!("{:032x}", u128::from_be_bytes(random));
+        let id = fresh_id()?;
         let record = Record {
             at: cw_base::time::format_rfc3339(at)
                 .map_err(Error::from)
@@ -70,14 +83,14 @@ impl Pending {
         log.append_phase(&record, &Phase::Started { id: id.clone() }, wait)
             .map_err(start_error)?;
         Ok(Self {
-            entry: Some(Entry {
+            entry: Some(Owed::Single(Box::new(Entry {
                 log,
                 wait,
                 started: Instant::now(),
                 command: meta.command(),
                 outcome: Phase::Outcome { id },
                 record,
-            }),
+            }))),
         })
     }
 
@@ -85,7 +98,7 @@ impl Pending {
     /// it names one (otherwise the started line's subject stays); on failure
     /// the stable error code, with the subject kept beside it.
     pub(crate) fn mark(&mut self, result: std::result::Result<Option<String>, &'static str>) {
-        let Some(entry) = self.entry.as_mut() else {
+        let Some(Owed::Single(entry)) = self.entry.as_mut() else {
             return;
         };
         let record = &mut entry.record;
@@ -105,10 +118,25 @@ impl Pending {
         }
     }
 
-    /// Whether a started audit line was written for the command.
+    /// Whether a started audit line was written for the command. An itemized
+    /// command is audited once it admitted an item.
     #[must_use]
     pub fn is_audited(&self) -> bool {
-        self.entry.is_some()
+        match &self.entry {
+            Some(Owed::Single(_)) => true,
+            Some(Owed::Itemized(live)) => live.admitted() > 0,
+            None => false,
+        }
+    }
+
+    /// How many items an itemized command admitted: `0` for a command that
+    /// is not itemized or admitted nothing.
+    #[must_use]
+    pub fn admitted(&self) -> usize {
+        match &self.entry {
+            Some(Owed::Itemized(live)) => live.admitted(),
+            Some(Owed::Single(_)) | None => 0,
+        }
     }
 
     /// Write the outcome after the surface has rendered the result. A failure
@@ -117,11 +145,18 @@ impl Pending {
     /// the command is not audited.
     #[must_use = "a failure to write the audit line is for the surface to print"]
     pub fn settle(mut self) -> Option<AuditWarning> {
-        let entry = self.entry.take()?;
-        entry.write_outcome().err().map(|error| AuditWarning {
-            command: entry.command,
-            error,
-        })
+        match self.entry.take()? {
+            Owed::Single(entry) => entry.write_outcome().err().map(|error| AuditWarning {
+                command: entry.command,
+                error,
+            }),
+            Owed::Itemized(live) => {
+                let command = live.command();
+                live.write_outcomes()
+                    .err()
+                    .map(|error| AuditWarning { command, error })
+            }
+        }
     }
 }
 
@@ -129,8 +164,14 @@ impl Drop for Pending {
     fn drop(&mut self) {
         // A surface may drop a known outcome before settling. The start on
         // disk still records the attempt if the outcome cannot be written.
-        if let Some(entry) = self.entry.take() {
-            let _ = entry.write_outcome();
+        match self.entry.take() {
+            Some(Owed::Single(entry)) => {
+                let _ = entry.write_outcome();
+            }
+            Some(Owed::Itemized(live)) => {
+                let _ = live.write_outcomes();
+            }
+            None => {}
         }
     }
 }
@@ -145,7 +186,15 @@ impl Entry {
     }
 }
 
-fn start_error(error: Error) -> cw_base::Error {
+/// A fresh 128-bit id, as 32 lowercase hex digits.
+pub(super) fn fresh_id() -> Result<String, cw_base::Error> {
+    let mut random = [0; 16];
+    getrandom::fill(&mut random)
+        .map_err(|error| cw_base::Error::new(cw_base::Kind::Internal, "audit_id_failed", error))?;
+    Ok(format!("{:032x}", u128::from_be_bytes(random)))
+}
+
+pub(super) fn start_error(error: Error) -> cw_base::Error {
     cw_base::Error::new(error.kind(), "audit_start_failed", error)
 }
 

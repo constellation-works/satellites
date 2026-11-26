@@ -85,6 +85,15 @@ pub enum Error {
         /// How many bytes of its end were read.
         tail: u64,
     },
+    /// A command that is not itemized asked to admit audit items. Only a
+    /// command [`crate::App::audit`] declares with [`crate::AuditMeta::itemized`]
+    /// admits items.
+    #[error("only an itemized command admits audit items")]
+    NotItemized,
+    /// An itemized command admitted items a second time. One command admits
+    /// one batch.
+    #[error("an itemized command admits one batch of audit items")]
+    AlreadyAdmitted,
 }
 
 impl Error {
@@ -99,6 +108,7 @@ impl Error {
             Self::Corrupt { .. } => Kind::Corrupt,
             Self::NewerFormat { .. } | Self::NewerLog { .. } => Kind::Incompatible,
             Self::UnknownLog { .. } => Kind::Corrupt,
+            Self::NotItemized | Self::AlreadyAdmitted => Kind::Internal,
         }
     }
 }

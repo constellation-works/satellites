@@ -7,7 +7,9 @@
 //!   a started line for a mutating command before running it against a
 //!   [`Ctx`], translates its error into
 //!   [`cw_base::Error`] once, and returns a [`Finished`] for the surface to
-//!   render and then settle.
+//!   render and then settle. A command that writes zero or many records is
+//!   itemized ([`AuditMeta::itemized`]): it admits its items through
+//!   [`Ctx::audit`] inside its transaction, before its commit.
 //! - [`env`](mod@env): [`Env::capture`], the only read of the process environment,
 //!   the data directory resolved from it as a pure function, and the
 //!   declaration of every variable a program reads ([`EnvVar`]), rendered as
@@ -16,6 +18,8 @@
 //!   `<root>/audit.jsonl`, their versioned format, and a reader that pairs them.
 //!   A started line already names the record the command is aimed at when the
 //!   app implements [`App::subject`].
+//! - [`testing`]: a helper that fails when an itemized command returns `Ok`
+//!   having written without admitting its items.
 //! - [`error`]: the typed [`Error`] this crate fails with.
 //!
 //! The crate is generic over what the program built at start ([`App::State`]),
@@ -77,8 +81,11 @@ pub mod audit;
 pub mod env;
 pub mod error;
 pub mod exec;
+pub mod testing;
 
-pub use audit::{AuditLog, AuditMeta, AuditWarning, Pending, Record, Status};
+pub use audit::{
+    AuditHandle, AuditLog, AuditMeta, AuditWarning, Batch, Item, Pending, Record, Status,
+};
 /// The byte limit accepted by [`AuditLog::read`].
 pub use cw_fs::Cap;
 pub use env::{AppEnv, Env, EnvVar};

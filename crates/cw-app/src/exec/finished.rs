@@ -32,6 +32,12 @@ impl<O> Finished<O> {
         self.audit.is_audited()
     }
 
+    /// How many items an itemized command admitted, zero for any other.
+    #[must_use]
+    pub fn admitted(&self) -> usize {
+        self.audit.admitted()
+    }
+
     /// Write the audit outcome and hand back the result with any warning.
     pub fn settle(self) -> (Result<O, cw_base::Error>, Option<AuditWarning>) {
         let warning = self.audit.settle();

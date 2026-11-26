@@ -25,6 +25,18 @@
 //!   error without running the command. Once the command has run, an
 //!   outcome append error reaches the surface as an [`AuditWarning`].
 //!   This crate prints and logs nothing.
+//! - **Itemized commands.** A command declared with [`AuditMeta::itemized`]
+//!   writes zero or many records. `exec` writes nothing before it runs; the
+//!   command calls [`AuditHandle::admit`] (from [`crate::Ctx::audit`]) inside
+//!   its transaction, after its last write and before the commit, and every
+//!   item's started line goes out in one append under one lock hold. A failed
+//!   admit is `audit_start_failed`: the command returns it and rolls back. The
+//!   surface settles the [`Batch`] after the reply: each item's outcome is
+//!   what was admitted, or a failure with the command's code when `run`
+//!   returned an error. A command that fails having admitted nothing leaves
+//!   one standalone failure line; one that succeeds having admitted nothing
+//!   leaves none. Each item is an ordinary pair under its own id, so the
+//!   format and [`AuditLog::read`] are the same for both forms.
 //! - **Versioned.** Each line carries its `format`; the reader upgrades an
 //!   older line through declared steps and refuses a newer one.
 //!   An append reads the log's newest line first and refuses a log in a
@@ -34,6 +46,7 @@
 
 mod actor;
 mod identifier;
+mod itemized;
 mod line;
 mod log;
 mod meta;
@@ -41,6 +54,8 @@ mod pending;
 mod target;
 
 pub use actor::{ACTOR_MAX_LEN, ACTOR_PLACEHOLDER};
+pub(crate) use itemized::Live;
+pub use itemized::{AuditHandle, Batch, Item};
 pub use line::{FORMAT, Record, Status};
 pub use log::{AuditLog, FILE, LOCK_FILE};
 pub use meta::AuditMeta;

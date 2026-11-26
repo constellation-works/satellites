@@ -1,7 +1,7 @@
 //! What a command runs against.
 
 use super::origin::Origin;
-use crate::audit::AuditLog;
+use crate::audit::{AuditHandle, AuditLog};
 use cw_base::Clock;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -78,33 +78,45 @@ impl<S> Runtime<S> {
         self.audit_wait
     }
 
-    /// The context a command from `origin` runs against.
+    /// The context a command from `origin` runs against. Its audit handle is
+    /// detached, as with [`Ctx::new`]; [`super::exec()`] builds its own.
     #[must_use]
     pub fn ctx<'a>(&'a self, origin: &'a Origin) -> Ctx<'a, S> {
         Ctx::new(&self.state, self.clock, origin)
     }
+
+    /// The context [`super::exec()`] runs a command in, with `audit` as the
+    /// handle through which an itemized command admits its items.
+    pub(super) fn ctx_with<'a>(&'a self, origin: &'a Origin, audit: AuditHandle<'a>) -> Ctx<'a, S> {
+        Ctx {
+            audit,
+            ..Ctx::new(&self.state, self.clock, origin)
+        }
+    }
 }
 
 /// The borrowed view a command runs against: the program's state, the
-/// clock and the client. A command reads the time and the actor from here,
+/// clock, the client and the audit handle. A command reads the time and the actor from here,
 /// never from the system, so a test that pins them pins every record.
 #[derive(Debug)]
 pub struct Ctx<'a, S> {
     state: &'a S,
     clock: Clock,
     origin: &'a Origin,
+    audit: AuditHandle<'a>,
 }
 
 impl<'a, S> Ctx<'a, S> {
     /// A context over `state`, reading the time from `clock`, for `origin`.
-    /// [`Runtime::ctx`] builds it for [`super::exec()`]; a test of one
-    /// command builds it directly.
+    /// A test of one command builds it directly; its audit handle is
+    /// detached ([`AuditHandle::admit`] writes nothing and succeeds).
     #[must_use]
     pub fn new(state: &'a S, clock: Clock, origin: &'a Origin) -> Self {
         Self {
             state,
             clock,
             origin,
+            audit: AuditHandle::detached(),
         }
     }
 
@@ -136,5 +148,13 @@ impl<'a, S> Ctx<'a, S> {
     #[must_use]
     pub fn actor(&self) -> Option<&'a str> {
         self.origin.actor()
+    }
+
+    /// How an itemized command admits its items: call
+    /// [`AuditHandle::admit`] inside the transaction, after the last write
+    /// and before the commit.
+    #[must_use]
+    pub fn audit(&self) -> &AuditHandle<'a> {
+        &self.audit
     }
 }

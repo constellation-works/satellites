@@ -120,13 +120,17 @@ audit/
 env/
 error/
 exec/
+testing.rs
 ```
 
-- `audit/` — the audit log: one line per mutating command.
+- `audit/` — the audit log: one line per mutating command, or one pair per
+  item of an itemized command.
 - `env/` — the process environment, read once.
 - `error/` — what this crate fails with.
 - `exec/` — the chokepoint: the one path from any surface to a program's
   commands.
+- `testing.rs` — a test helper that fails when an itemized command succeeds
+  having written without admitting its audit items.
 
 ## `cw-cli` — command-line surface mechanism
 
