@@ -54,7 +54,8 @@ if let Some(warning) = warning { eprintln!("warning: {warning}") }
 ## The environment
 
 `Env::capture()` is called once, in `main`. The presentation variables live in the same
-snapshot: `NO_COLOR`, `TERM`, `<APP>_FORMAT`, `<APP>_LOG`. An empty value reads as unset.
+snapshot: `NO_COLOR`, `CLICOLOR_FORCE`, `TERM`, `COLUMNS`, `<APP>_FORMAT`, `<APP>_LOG`. An empty
+value reads as unset.
 `Debug` shows variable names only, never values. `scripts/check-dependency-direction.sh`
 fails when a file under `src/` outside `src/env/` names `std::env`; it scans `src/` only, so
 tests and examples may read the environment.
@@ -64,8 +65,9 @@ tests and examples may read the environment.
 Every variable a program reads is declared once, as a `const` `EnvVar`: its name (global, or
 a suffix under the program's prefix), what it means, its default and the flag it stands in
 for. The kit declares its own (`KIT_VARS`: the root, format and log variables, `NO_COLOR`,
-`TERM`, `HOME`, `USER`, `USERNAME`) and reads them only through those declarations; a
-program declares its own the same way and reads one with `env.app(name).get(&VAR)`.
+`CLICOLOR_FORCE`, `TERM`, `COLUMNS`, `HOME`, `USER`, `USERNAME`) and reads them only through
+those declarations; a program declares its own the same way and reads one with
+`env.app(name).get(&VAR)`.
 
 ```rust,ignore
 const STEP: EnvVar = EnvVar::app("STEP", "How much `add` adds.").with_default("`1`").with_flag("--step");

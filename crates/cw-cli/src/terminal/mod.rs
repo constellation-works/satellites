@@ -23,6 +23,7 @@ pub use format::{Format, Mode};
 pub use probe::Probe;
 
 use cw_app::Env;
+use cw_app::env::{CLICOLOR_FORCE, COLUMNS};
 
 /// The decision, made once per invocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,7 +65,8 @@ impl Terminal {
             // Each is checked before the next is tried, so an unusable
             // `COLUMNS` (`0`, `wide`) falls back to the measured width.
             let usable = |columns: &usize| *columns > 0;
-            env.var("COLUMNS")
+            env.app(app)
+                .get(&COLUMNS)
                 .and_then(|value| value.to_str())
                 .and_then(|value| value.trim().parse::<usize>().ok())
                 .filter(usable)
@@ -74,8 +76,8 @@ impl Terminal {
         };
         Self {
             mode,
-            color: colors(env, probe.stdout),
-            stderr_color: colors(env, probe.stderr),
+            color: colors(env, app, probe.stdout),
+            stderr_color: colors(env, app, probe.stderr),
             width,
         }
     }
@@ -108,10 +110,10 @@ impl Terminal {
 }
 
 /// Whether a stream that is (`tty`) or is not a terminal is coloured.
-fn colors(env: &Env, tty: bool) -> bool {
+fn colors(env: &Env, app: &str, tty: bool) -> bool {
     if !tty || env.no_color() {
         return false;
     }
     let dumb = env.term().is_some_and(|term| term == "dumb");
-    !dumb || env.var("CLICOLOR_FORCE").is_some()
+    !dumb || env.app(app).get(&CLICOLOR_FORCE).is_some()
 }

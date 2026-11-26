@@ -16,7 +16,9 @@ mod table;
 mod var;
 
 pub use app::AppEnv;
-pub use kit::{FORMAT, HOME, KIT_VARS, LOG, NO_COLOR, ROOT, TERM, USER, USERNAME};
+pub use kit::{
+    CLICOLOR_FORCE, COLUMNS, FORMAT, HOME, KIT_VARS, LOG, NO_COLOR, ROOT, TERM, USER, USERNAME,
+};
 pub use table::table;
 pub use var::{EnvVar, VarName};
 

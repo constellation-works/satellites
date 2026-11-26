@@ -19,8 +19,20 @@ pub const LOG: EnvVar = EnvVar::app("LOG", "The log filter.");
 /// Output without color, the `no-color.org` convention.
 pub const NO_COLOR: EnvVar = EnvVar::global("NO_COLOR", "Any non-empty value turns color off.");
 
+/// Color on for a terminal, even one that says it is `dumb`.
+pub const CLICOLOR_FORCE: EnvVar = EnvVar::global(
+    "CLICOLOR_FORCE",
+    "Any non-empty value turns color on for a terminal, even a `dumb` one; `NO_COLOR` still wins.",
+);
+
 /// The terminal type.
 pub const TERM: EnvVar = EnvVar::global("TERM", "The terminal type, such as `dumb`.");
+
+/// The width of a terminal, in columns.
+pub const COLUMNS: EnvVar = EnvVar::global(
+    "COLUMNS",
+    "The width in columns that a table must fit, when it is a positive number.",
+);
 
 /// The home directory.
 pub const HOME: EnvVar = EnvVar::global(
@@ -41,4 +53,15 @@ pub const USERNAME: EnvVar = EnvVar::global(
 );
 
 /// Every variable the kit reads, in the order its table lists them.
-pub const KIT_VARS: &[EnvVar] = &[ROOT, FORMAT, LOG, NO_COLOR, TERM, HOME, USER, USERNAME];
+pub const KIT_VARS: &[EnvVar] = &[
+    ROOT,
+    FORMAT,
+    LOG,
+    NO_COLOR,
+    CLICOLOR_FORCE,
+    TERM,
+    COLUMNS,
+    HOME,
+    USER,
+    USERNAME,
+];

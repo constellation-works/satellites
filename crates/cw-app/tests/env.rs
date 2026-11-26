@@ -62,7 +62,9 @@ fn the_table_lists_the_kit_variables_then_the_programs_own() {
 | `MY_TOOL_FORMAT` | The output format. | — | — |
 | `MY_TOOL_LOG` | The log filter. | — | — |
 | `NO_COLOR` | Any non-empty value turns color off. | — | — |
+| `CLICOLOR_FORCE` | Any non-empty value turns color on for a terminal, even a `dumb` one; `NO_COLOR` still wins. | — | — |
 | `TERM` | The terminal type, such as `dumb`. | — | — |
+| `COLUMNS` | The width in columns that a table must fit, when it is a positive number. | — | — |
 | `HOME` | The home directory; the default data directory is under it. | — | — |
 | `USER` | The user the environment claims, recorded as the actor; a claim, not an identity. | — | — |
 | `USERNAME` | The claimed user when the one above is unset, empty or not UTF-8, on every platform. | — | — |
@@ -71,4 +73,22 @@ fn the_table_lists_the_kit_variables_then_the_programs_own() {
 | `PAGER` | The pager for long output. | — | — |
 ";
     assert_eq!(table("my-tool", &[STEP, PRESET, PAGER]), expected);
+}
+
+#[test]
+fn the_kit_declares_the_color_and_width_variables() {
+    use cw_app::env::{CLICOLOR_FORCE, COLUMNS, KIT_VARS, VarName, table};
+
+    assert!(KIT_VARS.contains(&CLICOLOR_FORCE));
+    assert!(KIT_VARS.contains(&COLUMNS));
+    assert_eq!(CLICOLOR_FORCE.name(), VarName::Global("CLICOLOR_FORCE"));
+    assert_eq!(COLUMNS.name(), VarName::Global("COLUMNS"));
+
+    let text = table("my-tool", &[]);
+    assert!(text.contains(
+        "| `CLICOLOR_FORCE` | Any non-empty value turns color on for a terminal, even a `dumb` one; `NO_COLOR` still wins. | — | — |\n"
+    ));
+    assert!(text.contains(
+        "| `COLUMNS` | The width in columns that a table must fit, when it is a positive number. | — | — |\n"
+    ));
 }
