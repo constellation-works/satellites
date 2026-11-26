@@ -9,7 +9,8 @@
 //!   terminal's width when there is one, and nothing at all when it has no
 //!   rows;
 //! - [`Mode::Plain`]: the same rows, tab-separated, with no header;
-//! - [`Mode::Json`]: the payload as one JSON document.
+//! - [`Mode::Json`]: the payload as one JSON document, compact by default
+//!   and indented with [`Sink::pretty_json`].
 //!
 //! stdout is latched: a closed reader (`tool list | head -1`) stops the
 //! writes but not the command, which runs to its end; [`Sink::finish`] then
@@ -43,6 +44,7 @@ pub struct Sink<O: Write = io::Stdout, E: Write = io::Stderr> {
     terminal: Terminal,
     out: Latch<O>,
     pub(crate) err: E,
+    pretty: bool,
 }
 
 /// One part of a detail view, optionally painted with a semantic role.
@@ -90,7 +92,19 @@ impl<O: Write, E: Write> Sink<O, E> {
             terminal,
             out: Latch::new(out),
             err,
+            pretty: false,
         }
+    }
+
+    /// Write the JSON form indented, as `serde_json::to_string_pretty` writes
+    /// it, with one line break after it. Without this call the JSON form is
+    /// compact, on one line. Only [`Mode::Json`] output changes: tables and
+    /// plain lines are the same either way, and the latch and error handling
+    /// are too.
+    #[must_use]
+    pub fn pretty_json(mut self) -> Self {
+        self.pretty = true;
+        self
     }
 
     /// The decision this sink renders by.
@@ -113,7 +127,7 @@ impl<O: Write, E: Write> Sink<O, E> {
         human: impl FnOnce(&T) -> Table,
     ) -> Result<()> {
         let text = match self.terminal.mode() {
-            Mode::Json => json(payload)?,
+            Mode::Json => self.json(payload)?,
             Mode::Table => {
                 human(payload).render(self.terminal.width(), Color::of(self.terminal.color()))
             }
@@ -136,7 +150,7 @@ impl<O: Write, E: Write> Sink<O, E> {
         human: impl FnOnce(&T) -> String,
     ) -> Result<()> {
         let text = match self.terminal.mode() {
-            Mode::Json => json(payload)?,
+            Mode::Json => self.json(payload)?,
             Mode::Table | Mode::Plain => {
                 let mut text = escape_text(&human(payload)).into_owned();
                 if !text.ends_with('\n') {
@@ -162,7 +176,7 @@ impl<O: Write, E: Write> Sink<O, E> {
         human: impl FnOnce(&T) -> Vec<TextSpan>,
     ) -> Result<()> {
         let text = match self.terminal.mode() {
-            Mode::Json => json(payload)?,
+            Mode::Json => self.json(payload)?,
             Mode::Table | Mode::Plain => {
                 let spans = human(payload);
                 let mut text = String::new();
@@ -263,11 +277,17 @@ impl<O: Write, E: Write> Sink<O, E> {
             self.out.fail(error);
         }
     }
-}
 
-/// `payload` as one JSON document and a line break.
-fn json<T: Serialize + ?Sized>(payload: &T) -> Result<String> {
-    let mut text = serde_json::to_string(payload).map_err(Error::Encode)?;
-    text.push('\n');
-    Ok(text)
+    /// `payload` as one JSON document and a line break: compact, or indented
+    /// when [`Sink::pretty_json`] asked for it.
+    fn json<T: Serialize + ?Sized>(&self, payload: &T) -> Result<String> {
+        let mut text = if self.pretty {
+            serde_json::to_string_pretty(payload)
+        } else {
+            serde_json::to_string(payload)
+        }
+        .map_err(Error::Encode)?;
+        text.push('\n');
+        Ok(text)
+    }
 }

@@ -227,3 +227,84 @@ fn an_empty_list_writes_no_header_and_json_still_writes_its_array() -> TestResul
     }
     Ok(())
 }
+
+#[derive(Serialize)]
+struct Owner {
+    name: &'static str,
+    admin: bool,
+}
+
+/// A structured payload with a nested object, an array and an empty array,
+/// so pretty output differs from compact at every level.
+#[derive(Serialize)]
+struct Detail {
+    id: &'static str,
+    tags: Vec<&'static str>,
+    owner: Option<Owner>,
+    links: Vec<u32>,
+}
+
+fn detail() -> Detail {
+    Detail {
+        id: "n1",
+        tags: vec!["draft", "wip"],
+        owner: Some(Owner {
+            name: "ana",
+            admin: true,
+        }),
+        links: Vec::new(),
+    }
+}
+
+const DETAIL_COMPACT: &str = "{\"id\":\"n1\",\"tags\":[\"draft\",\"wip\"],\"owner\":{\"name\":\"ana\",\"admin\":true},\"links\":[]}\n";
+const DETAIL_PRETTY: &str = "{\n  \"id\": \"n1\",\n  \"tags\": [\n    \"draft\",\n    \"wip\"\n  ],\n  \"owner\": {\n    \"name\": \"ana\",\n    \"admin\": true\n  },\n  \"links\": []\n}\n";
+
+#[test]
+fn json_is_compact_by_default_and_pretty_only_when_opted_in() -> TestResult {
+    // The expected bytes are pinned here. The pretty form must also match what
+    // `to_writer_pretty` writes plus a line break, the call the Scribe adopter
+    // makes today.
+    assert_eq!(serde_json::to_string(&detail())? + "\n", DETAIL_COMPACT);
+    let mut written = Vec::new();
+    serde_json::to_writer_pretty(&mut written, &detail())?;
+    written.push(b'\n');
+    assert_eq!(String::from_utf8(written)?, DETAIL_PRETTY);
+    for probe in [Probe::piped(), Probe::terminal(Some(20))] {
+        // Default: compact, on every JSON path.
+        let mut compact = sink(probe, Some(Format::Json));
+        compact.emit(&detail(), |_| Table::default())?;
+        compact.emit_text(&detail(), |_| String::new())?;
+        compact.emit_text_spans(&detail(), |_| Vec::new())?;
+        compact.finish()?;
+        assert_eq!(
+            String::from_utf8(compact.into_parts().0)?,
+            format!("{DETAIL_COMPACT}{DETAIL_COMPACT}{DETAIL_COMPACT}")
+        );
+
+        // Opted in: pretty, on the same three paths, one line break after each.
+        let mut pretty = sink(probe, Some(Format::Json)).pretty_json();
+        pretty.emit(&detail(), |_| Table::default())?;
+        pretty.emit_text(&detail(), |_| String::new())?;
+        pretty.emit_text_spans(&detail(), |_| Vec::new())?;
+        pretty.finish()?;
+        assert_eq!(
+            String::from_utf8(pretty.into_parts().0)?,
+            format!("{DETAIL_PRETTY}{DETAIL_PRETTY}{DETAIL_PRETTY}")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn pretty_json_leaves_tables_and_plain_lines_unchanged() -> TestResult {
+    for (probe, expected) in [
+        (Probe::terminal(None), "ID  TITLE\nn1  draft\nn2  -\n"),
+        (Probe::piped(), "n1\tdraft\nn2\t-\n"),
+    ] {
+        let mut sink = sink(probe, None).pretty_json();
+        sink.emit(&NOTES[..], table)?;
+        sink.finish()?;
+        assert_eq!(String::from_utf8(sink.into_parts().0)?, expected);
+    }
+    Ok(())
+}

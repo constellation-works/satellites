@@ -12,6 +12,7 @@ snapshot `cw_app::Env::capture()` took.
 | `Terminal::decide(&env, app, probe, format)` | The same decision as a pure function of the snapshot and a `Probe` of the streams, for tests |
 | `Format` | `auto`, `table` or `json`: a `clap::ValueEnum` for the program's `--format` flag |
 | `Sink::stdio(terminal)` / `Sink::new(terminal, out, err)` | The only path to stdout and stderr |
+| `sink.pretty_json()` | Opt-in: writes the JSON form indented, as `serde_json::to_string_pretty` does. Compact is the default |
 | `sink.emit(&payload, to_table)` | One payload, rendered as a borderless table, tab-separated lines or one JSON document |
 | `sink.emit_text(&payload, to_text)` | The same for a detail view that is not a list; escapes except line breaks and tabs |
 | `sink.emit_text_spans(&payload, to_spans)` | A detail view composed of `TextSpan`s, optionally coloured by `Role` |
@@ -52,6 +53,11 @@ asks, and `scripts/check-dependency-direction.sh` fails when one does.
 - Every control character in a value is written as a visible escape (`\n`, `\t`, `\r`,
   else `\u{...}`), so a value cannot break its line or reach the terminal as control.
   JSON escapes its own.
+- JSON is compact by default: one line, then a line break. `sink.pretty_json()` opts in to
+  the same document indented as `serde_json::to_string_pretty` writes it, with one line
+  break after it. It applies to `emit`, `emit_text` and `emit_text_spans` alike, changes
+  nothing in table or plain output, and writes through the same latch, so a closed stdout
+  and every other write failure behave as above.
 - `notice`, `warn` and `report` escape every control character in their text the same
   way (`\n`, `\t`, `\r`, else `\u{...}`): a line feed, carriage return, tab or ESC in
   the argument comes out escaped, never as control, so a value cannot forge a second

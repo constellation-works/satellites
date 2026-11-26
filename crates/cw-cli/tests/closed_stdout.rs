@@ -118,3 +118,93 @@ fn the_example_list_is_silent_on_stderr_after_its_reader_goes_away() -> TestResu
     assert_eq!(String::from_utf8(err)?, "", "nothing on stderr");
     Ok(())
 }
+
+#[test]
+fn pretty_json_keeps_the_closed_reader_latch() -> TestResult {
+    let terminal = Terminal::decide(&Env::default(), "notes", Probe::piped(), Some(Format::Json));
+    let mut sink = Sink::new(terminal, Closed { attempts: 0 }, Vec::new()).pretty_json();
+
+    // The same shape as the compact test: two writes, then the commit.
+    let mut done = Vec::new();
+    sink.emit(&["first"], |_| Table::default())?;
+    assert!(sink.is_closed());
+    sink.emit_text(&"second", |_| String::new())?;
+    done.push("committed");
+
+    let exit = match sink.finish() {
+        Ok(()) => Exit::SUCCESS,
+        Err(error) => panic!("a closed reader is not a failure: {error}"),
+    };
+    let (out, err) = sink.into_parts();
+    assert_eq!(done, ["committed"]);
+    assert_eq!(exit.code(), 0);
+    assert_eq!(out.attempts, 1, "nothing is written after the latch");
+    assert!(err.is_empty(), "nothing on stderr");
+    Ok(())
+}
+
+/// A writer whose every write fails with `kind`, other than a closed reader.
+struct Failing {
+    kind: io::ErrorKind,
+    attempts: usize,
+}
+
+impl Write for Failing {
+    fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+        self.attempts += 1;
+        Err(self.kind.into())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Err(self.kind.into())
+    }
+}
+
+#[test]
+fn pretty_json_latches_other_write_failures_and_finish_reports_them() -> TestResult {
+    let terminal = Terminal::decide(&Env::default(), "notes", Probe::piped(), Some(Format::Json));
+    let full = Failing {
+        kind: io::ErrorKind::StorageFull,
+        attempts: 0,
+    };
+    let mut sink = Sink::new(terminal, full, Vec::new()).pretty_json();
+    sink.emit(&["first"], |_| Table::default())?;
+    sink.emit(&["second"], |_| Table::default())?;
+    match sink.finish() {
+        Err(Error::Output(error)) => assert_eq!(error.kind(), io::ErrorKind::StorageFull),
+        other => panic!("a failed write must fail finish: {other:?}"),
+    }
+    let (out, err) = sink.into_parts();
+    assert_eq!(out.attempts, 1, "nothing is written after the latch");
+    assert!(err.is_empty(), "nothing on stderr");
+    Ok(())
+}
+
+#[test]
+fn pretty_json_fails_finish_on_a_lost_payload_and_retries_an_interrupted_flush() -> TestResult {
+    let terminal = Terminal::decide(&Env::default(), "notes", Probe::piped(), Some(Format::Json));
+
+    let takes_nothing = Stubborn {
+        takes_nothing: true,
+        ..Stubborn::default()
+    };
+    let mut sink = Sink::new(terminal, takes_nothing, Vec::new()).pretty_json();
+    sink.emit(&["payload"], |_| Table::default())?;
+    match sink.finish() {
+        Err(Error::Output(error)) => assert_eq!(error.kind(), io::ErrorKind::WriteZero),
+        other => panic!("a lost payload must fail finish: {other:?}"),
+    }
+
+    let interrupted = Stubborn {
+        interrupted: true,
+        ..Stubborn::default()
+    };
+    let mut sink = Sink::new(terminal, interrupted, Vec::new()).pretty_json();
+    sink.emit(&["payload"], |_| Table::default())?;
+    sink.finish()?;
+    assert!(
+        sink.into_parts().0.flushed,
+        "the interrupted flush is retried"
+    );
+    Ok(())
+}
