@@ -1,5 +1,10 @@
 //! Files through the public API, on temporary roots.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "file fixture: writes and inspects raw files and modes, and runs mkfifo, to create the states cw-fs must refuse"
+)]
+
 use cw_fs::{Cap, Error, append, create_new, read, write_atomic};
 use std::io;
 

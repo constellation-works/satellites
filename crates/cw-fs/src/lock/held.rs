@@ -4,6 +4,11 @@
 //! file it already holds and asks again would wait on itself until its
 //! deadline. This record lets [`super::Lock::acquire`] refuse at once.
 
+#![expect(
+    clippy::disallowed_types,
+    reason = "the lock adapter: the held lock keeps the File that the OS advisory lock is taken on"
+)]
+
 use crate::error::{Error, Result};
 use std::cell::RefCell;
 use std::fs::File;

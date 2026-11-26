@@ -1,5 +1,14 @@
 //! Opening a file by name only when it is a regular file.
 
+#![expect(
+    clippy::disallowed_types,
+    reason = "open is the file adapter: it inspects a path and opens the one regular file the helpers return"
+)]
+#![expect(
+    clippy::disallowed_methods,
+    reason = "open is the file adapter: it inspects a path with symlink_metadata before it opens anything"
+)]
+
 use crate::error::{EntryKind, Error, Result};
 use std::fs::{File, FileType};
 use std::io;

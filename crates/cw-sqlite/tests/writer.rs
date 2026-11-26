@@ -1,6 +1,11 @@
 //! The owned [`cw_sqlite::Writer`] handle and outside-transaction WAL
 //! `TRUNCATE` checkpointing through the public API, on temporary roots.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "writer fixture: reads and changes the raw files a writer leaves, to check their bytes and modes"
+)]
+
 use cw_base::Kind;
 use cw_sqlite::rusqlite::TransactionBehavior;
 use cw_sqlite::{Db, Error, Step};

@@ -3,6 +3,10 @@
     clippy::expect_used,
     reason = "tests assert fixture setup and child output"
 )]
+#![expect(
+    clippy::disallowed_methods,
+    reason = "child fixture: reads inherited variables and runs a child with output, to check what the builder configures"
+)]
 
 use std::collections::BTreeMap;
 

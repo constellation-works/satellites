@@ -22,6 +22,11 @@
 //!   handle cannot read the record while the holder's lock covers the file,
 //!   and there is no liveness probe here.
 
+#![expect(
+    clippy::disallowed_types,
+    reason = "the lock adapter: the holder record is written and read through the lock's own File, and Linux identity opens the owner's proc stat file"
+)]
+
 use cw_base::Clock;
 use std::fmt;
 use std::fs::File;

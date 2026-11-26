@@ -1,5 +1,10 @@
 //! The private temporary root a test runs in.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "root is the fixture adapter for temporary roots: it creates, inspects and canonicalizes the directory a test owns, and reads the temporary directory"
+)]
+
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;

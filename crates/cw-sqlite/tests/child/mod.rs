@@ -3,6 +3,11 @@
 //! reaped however the parent test ends, and waited on with a deadline.
 
 #![allow(dead_code, reason = "each test file uses its own part of it")]
+#![expect(
+    clippy::disallowed_methods,
+    reason = "child helper: starts this test binary and returns the live Child so the test holds its pipes; the bounded runner runs to completion and cannot"
+)]
+
 use std::io::{BufRead as _, BufReader};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};

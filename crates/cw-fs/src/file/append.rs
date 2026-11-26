@@ -1,5 +1,10 @@
 //! Appending one record to a log.
 
+#![expect(
+    clippy::disallowed_types,
+    reason = "append is the file adapter: it opens the log with owner only mode and holds the handle it writes to"
+)]
+
 use super::open::{Access, open_regular};
 use crate::dir::sync_parent;
 use crate::error::{Error, Result};

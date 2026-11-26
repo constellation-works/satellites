@@ -2,6 +2,11 @@
 //! racing openers, a failing step, the foreign-key guard, and a database a
 //! newer build migrated.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "migration fixture: stages raw database files at older schema versions and reads and writes what a migration leaves, to check it on disk"
+)]
+
 use cw_base::Kind;
 use cw_sqlite::rusqlite::Transaction;
 use cw_sqlite::{Db, Error, Step};

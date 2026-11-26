@@ -3,3 +3,54 @@
 # example crates/cw-mcp/tests/fixture) carries its own reasoned expect.
 allow-expect-in-tests = true
 allow-unwrap-in-tests = true
+
+# STD-02 R3, R5, R6: the file, process and environment boundary, resolved by
+# Clippy. Each adapter module carries a module-level #![expect(clippy::…,
+# reason = "…")] (STD-02 R35) that names the adapter it implements, and every
+# other module goes through that adapter. Tests and examples carry their own
+# reasoned expectations for the fixture access they need.
+disallowed-types = [
+    { path = "std::fs::File", reason = "file I/O belongs to cw-fs; open files through its helpers (file::read, file::write_atomic, file::append, lock::Lock)" },
+    { path = "std::fs::OpenOptions", reason = "file I/O belongs to cw-fs; open files through its helpers (file::read, file::write_atomic, file::append, lock::Lock)" },
+    { path = "std::fs::ReadDir", reason = "directory listing belongs to cw-fs; list through cw-fs::list" },
+    { path = "std::fs::DirEntry", reason = "directory listing belongs to cw-fs; list through cw-fs::list" },
+]
+disallowed-methods = [
+    # std::fs: file I/O belongs to cw-fs, the file and directory adapter
+    { path = "std::fs::read", reason = "read through cw-fs::read, which caps the size and checks owner and mode" },
+    { path = "std::fs::read_to_string", reason = "read through cw-fs::read, which caps the size and checks owner and mode" },
+    { path = "std::fs::write", reason = "write durable files through cw-fs::write_atomic" },
+    { path = "std::fs::remove_file", reason = "remove files through cw-fs::remove, which flushes the directory" },
+    { path = "std::fs::remove_dir", reason = "cw-fs has no directory removal yet; add it to cw-fs rather than call std::fs" },
+    { path = "std::fs::remove_dir_all", reason = "cw-fs has no directory removal yet; add it to cw-fs rather than call std::fs" },
+    { path = "std::fs::create_dir", reason = "create directories through cw-fs::create_private_dir (owner-only)" },
+    { path = "std::fs::create_dir_all", reason = "create directories through cw-fs::create_private_dir (owner-only)" },
+    { path = "std::fs::rename", reason = "replace files through cw-fs::write_atomic, which renames and flushes the directory" },
+    { path = "std::fs::copy", reason = "cw-fs has no copy helper yet; add it to cw-fs rather than call std::fs" },
+    { path = "std::fs::hard_link", reason = "cw-fs has no link helper yet; add it to cw-fs, which refuses links" },
+    { path = "std::fs::soft_link", reason = "cw-fs has no link helper yet; add it to cw-fs, which refuses links" },
+    { path = "std::fs::metadata", reason = "inspect paths through cw-fs::inspect_file or cw-fs::inspect_dir" },
+    { path = "std::fs::symlink_metadata", reason = "inspect paths through cw-fs::inspect_file or cw-fs::inspect_dir" },
+    { path = "std::fs::set_permissions", reason = "cw-fs creates owner-only files and directories; set modes in cw-fs" },
+    { path = "std::fs::read_dir", reason = "list through cw-fs::list" },
+    { path = "std::fs::read_link", reason = "cw-fs refuses symbolic links (inspect); do not resolve one by hand" },
+    { path = "std::fs::canonicalize", reason = "resolve paths at the composition root (cw-app) and pass the result in" },
+    { path = "std::fs::exists", reason = "check through cw-fs::inspect_file or cw-fs::inspect_dir" },
+    # std::env: resolved inputs flow down from composition (R3); cw-app reads the environment once
+    { path = "std::env::var", reason = "read the environment once at the composition root (cw_app::env::Env::capture) and pass the value in" },
+    { path = "std::env::var_os", reason = "read the environment once at the composition root (cw_app::env::Env::capture) and pass the value in" },
+    { path = "std::env::vars", reason = "read the environment once at the composition root (cw_app::env::Env::capture) and pass the value in" },
+    { path = "std::env::vars_os", reason = "read the environment once at the composition root (cw_app::env::Env::capture) and pass the value in" },
+    { path = "std::env::current_dir", reason = "resolve the working root at the composition root (cw-app) and pass it in" },
+    { path = "std::env::home_dir", reason = "read HOME through cw_app::env::Env::home at the composition root and pass it in" },
+    # Beyond the vendored baseline: the std::env items the retired script rule covered in cw-app and cw-cli but the baseline does not list (STD-02 R3)
+    { path = "std::env::temp_dir", reason = "resolve the temporary root at the composition root and pass it in" },
+    { path = "std::env::args", reason = "read the arguments once, in the surface's main, and pass the parsed values in" },
+    { path = "std::env::args_os", reason = "read the arguments once, in the surface's main, and pass the parsed values in" },
+    { path = "std::env::set_var", reason = "a program does not set its own environment; pass the value to the child with Command::env" },
+    { path = "std::env::remove_var", reason = "a program does not set its own environment; pass the value to the child with Command::env" },
+    # std::process: children run through cw-supervise's bounded runner (deadline, process group, capped capture)
+    { path = "std::process::Command::output", reason = "run children through cw_supervise::Run, the bounded runner (deadline, process group, capped capture)" },
+    { path = "std::process::Command::status", reason = "run children through cw_supervise::Run, the bounded runner (deadline, process group, capped capture)" },
+    { path = "std::process::Command::spawn", reason = "run children through cw_supervise::Run, the bounded runner (deadline, process group, capped capture)" },
+]

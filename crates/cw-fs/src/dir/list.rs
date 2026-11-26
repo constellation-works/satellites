@@ -1,5 +1,10 @@
 //! Listing a private directory.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "dir list is the directory adapter, the one place that lists a directory"
+)]
+
 use crate::error::{Error, Result};
 use crate::inspect::inspect_dir;
 use std::path::Path;

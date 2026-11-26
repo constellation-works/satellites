@@ -1,5 +1,9 @@
 //! The temp root is private and is removed on drop.
 #![allow(clippy::expect_used, reason = "tests assert fixture setup")]
+#![expect(
+    clippy::disallowed_methods,
+    reason = "root fixture: inspects the temporary roots and raw modes the fixture makes, and reads the environment the root is built from"
+)]
 
 use cw_testkit::TempRoot;
 

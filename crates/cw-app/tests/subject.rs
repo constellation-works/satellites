@@ -1,6 +1,11 @@
 //! The subject: the record a mutating command is aimed at, written on its
 //! started line and kept beside its outcome.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "subject fixture: creates and reads the raw files a command writes, to check their bytes on disk"
+)]
+
 use cw_app::{
     App, AuditLog, AuditMeta, Ctx, Origin, Runtime, Status, Surface, audit::TARGET_MAX_LEN,
     audit::TARGET_PLACEHOLDER, exec,

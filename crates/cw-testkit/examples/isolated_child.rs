@@ -5,6 +5,11 @@
 //! cargo run -p cw-testkit --example isolated_child
 //! ```
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "example: builds a raw root and runs the child by hand, to show what the isolated child builder configures"
+)]
+
 use std::io::Write as _;
 use std::process::ExitCode;
 

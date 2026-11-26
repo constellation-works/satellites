@@ -1,5 +1,10 @@
 //! The golden harness: output compared with checked-in files.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "golden is the fixture adapter for golden files: it reads, writes and checks the files a test compares, and reads the update switch"
+)]
+
 mod timestamps;
 
 use std::path::{Component, Path, PathBuf};

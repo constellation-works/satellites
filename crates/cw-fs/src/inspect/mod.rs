@@ -10,6 +10,11 @@
 //! On native Windows the owner and mode checks are skipped; a symbolic link
 //! is still refused.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "inspect is the metadata adapter: it stats a path without following a link, which is how a link is refused"
+)]
+
 mod owner;
 
 pub(crate) use owner::check_owner_and_mode;

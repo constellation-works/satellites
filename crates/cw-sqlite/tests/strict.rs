@@ -5,6 +5,14 @@
 //! docs state.
 
 #![cfg(unix)]
+#![expect(
+    clippy::disallowed_methods,
+    reason = "strict fixture: copies and chmods raw database and sidecar files, and opens one directly, to check what a strict read leaves alone"
+)]
+#![expect(
+    clippy::disallowed_types,
+    reason = "strict fixture: opens a raw database file directly, to check the bytes a strict read leaves alone"
+)]
 
 use cw_base::Kind;
 use cw_sqlite::rusqlite::ErrorCode;

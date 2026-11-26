@@ -50,6 +50,10 @@ pub fn stage(path: &Path, migrations: &'static [Step], version: u32) -> Result<(
 mod tests {
     #[cfg(unix)]
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test reads the mode of the temporary root it made, the one fact it checks"
+    )]
     fn the_temporary_root_is_owner_only() -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::PermissionsExt as _;
         let (root, db) = super::temp_db(&[])?;

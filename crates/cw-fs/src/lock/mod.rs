@@ -41,6 +41,11 @@
 //!   lock cannot be pointed at, or written as, another file; native Windows
 //!   skips those three checks.
 
+#![expect(
+    clippy::disallowed_types,
+    reason = "the lock adapter: Lock owns the File that the OS advisory lock is taken on, and that file is never deleted"
+)]
+
 mod held;
 mod holder;
 

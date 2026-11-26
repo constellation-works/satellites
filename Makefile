@@ -106,7 +106,8 @@ architecture-map:
 
 # The kit crates depend on each other only as the script's table allows,
 # cw-base names no file, environment or process API, and cw-cli asks about
-# terminal state only in src/terminal/. No compile.
+# terminal state only in src/terminal/. No compile. The file, environment and
+# process items the other crates may not use are clippy.toml's (ci-lint).
 dependency-direction:
 	sh scripts/check-dependency-direction.sh
 

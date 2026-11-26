@@ -130,9 +130,10 @@ for record in log.read(Cap::bytes(1 << 20))? {
 `Env::capture()` is called once, in `main`. The presentation variables live in the same
 snapshot: `NO_COLOR`, `CLICOLOR_FORCE`, `TERM`, `COLUMNS`, `<APP>_FORMAT`, `<APP>_LOG`. An empty
 value reads as unset.
-`Debug` shows variable names only, never values. `scripts/check-dependency-direction.sh`
-fails when a file under `src/` outside `src/env/` names `std::env`; it scans `src/` only, so
-tests and examples may read the environment.
+`Debug` shows variable names only, never values. `clippy.toml` bans the `std::env` reads, and
+`src/env/` is the one module whose `#![expect]` allows them, so `make ci-lint` fails when another
+file under `src/` reads the environment. Tests and examples may read it under their own reasoned
+expectations.
 
 ## Declaring variables
 

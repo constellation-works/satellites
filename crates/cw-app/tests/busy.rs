@@ -5,6 +5,11 @@
 //! The other holder is a second process. The test measures wall-clock
 //! time, so it runs alone (`.config/nextest.toml`).
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "busy fixture: a live child holds the lock across processes, so the test spawns it directly and reads its hold variable; the bounded runner runs to completion and cannot hold one open"
+)]
+
 use cw_app::{App, AuditMeta, Ctx, Origin, Runtime, Status, Surface, exec};
 use cw_base::{Error, Kind};
 use cw_fs::{Cap, Lock};

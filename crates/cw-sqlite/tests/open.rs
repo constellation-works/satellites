@@ -2,6 +2,10 @@
 //! it creates and refuses, and the pragmas it sets.
 
 #![cfg(unix)]
+#![expect(
+    clippy::disallowed_methods,
+    reason = "open fixture: creates and changes the raw database files and modes that open must inspect and refuse"
+)]
 
 use cw_base::Kind;
 use cw_sqlite::{Db, Error, Step};

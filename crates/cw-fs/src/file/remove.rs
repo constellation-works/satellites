@@ -1,5 +1,10 @@
 //! Removing a file durably.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "remove is the file adapter delete: it inspects the path and unlinks only a regular file it has judged"
+)]
+
 use super::open::judge;
 use crate::dir::sync_parent;
 use crate::error::{Error, Result};

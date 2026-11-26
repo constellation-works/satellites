@@ -2,6 +2,11 @@
 //! closes. The test runs this binary again as the server, with piped
 //! standard input and output.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "stdio fixture: starts the server binary and keeps its pipes open for the session, which the bounded runner cannot do"
+)]
+
 #[expect(
     dead_code,
     reason = "this test binary uses only part of the shared fixture"

@@ -1,5 +1,10 @@
 //! The run itself, on Linux and macOS: spawn, watch, stop, sweep, reap, drain.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "supervise is the bounded runner: it spawns the child in its own process group under a deadline with capped capture, and no other module spawns"
+)]
+
 use super::group::{Group, POLL_MAX, POLL_MIN};
 use super::reader::Reader;
 use super::{Captured, End, Outcome, Output, Overflow, Run};

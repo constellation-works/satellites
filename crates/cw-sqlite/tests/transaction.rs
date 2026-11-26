@@ -5,6 +5,11 @@
 //! The lock tests measure wall-clock time, so it has an explicit deadline
 //! and `.config/nextest.toml` runs this file's tests alone.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "transaction fixture: reads the variable that names the database a held-write child uses, the one fact the child needs"
+)]
+
 use cw_base::Kind;
 use cw_sqlite::{Db, Error, Step};
 use std::io::Write as _;

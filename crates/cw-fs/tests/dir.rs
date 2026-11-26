@@ -1,5 +1,10 @@
 //! Directories and inspection through the public API, on temporary roots.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "dir fixture: sets raw modes on directories to create the states cw-fs must refuse"
+)]
+
 use cw_fs::{create_private_dir, inspect_dir, inspect_file, list, write_atomic};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;

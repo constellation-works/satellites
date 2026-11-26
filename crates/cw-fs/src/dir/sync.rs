@@ -1,6 +1,14 @@
 //! Flushing a directory so a name created, renamed or removed in it
 //! survives a crash.
 
+#![cfg_attr(
+    unix,
+    expect(
+        clippy::disallowed_types,
+        reason = "the directory flush opens the directory read only to sync it; this module is the directory adapter's only handle"
+    )
+)]
+
 use crate::error::{Error, Result};
 use std::path::Path;
 

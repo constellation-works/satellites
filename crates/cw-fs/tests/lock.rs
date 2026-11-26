@@ -3,6 +3,15 @@
 //! These tests measure wall-clock time, so each has an explicit deadline and
 //! `.config/nextest.toml` runs them alone.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "lock fixture: holds the lock from a live child process and stages raw lock files and modes across processes"
+)]
+#![expect(
+    clippy::disallowed_types,
+    reason = "lock fixture: creates a raw file with OpenOptions to stage the state the lock must handle"
+)]
+
 use cw_fs::{Error, Holder, Lock, Result as FsResult};
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::path::Path;

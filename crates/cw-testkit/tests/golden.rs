@@ -4,6 +4,10 @@
     clippy::unwrap_used,
     reason = "tests assert fixture setup"
 )]
+#![expect(
+    clippy::disallowed_methods,
+    reason = "golden fixture: writes and reads raw golden files and runs the helper child that updates them"
+)]
 
 use cw_testkit::{Error, Goldens, TempRoot, UPDATE_VAR, redact_timestamps};
 

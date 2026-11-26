@@ -2,6 +2,10 @@
 //! receives, read back with `env`.
 
 #![cfg(any(target_os = "linux", target_os = "macos"))]
+#![expect(
+    clippy::disallowed_methods,
+    reason = "env fixture: reads this process variables to build the expected child environment"
+)]
 
 mod support;
 

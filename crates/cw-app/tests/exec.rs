@@ -1,6 +1,11 @@
 //! The chokepoint: what one command leaves in the audit log, and how its
 //! error and its audit failure reach the caller.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "exec fixture: reads and creates the raw files a command leaves, to check their bytes on disk"
+)]
+
 use cw_app::{
     App, AuditLog, AuditMeta, Ctx, Error as AuditError, Origin, Runtime, Status, Surface, exec,
 };

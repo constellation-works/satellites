@@ -5,10 +5,16 @@
 //! actor, whether to color output, the output format, the log filter) is a
 //! pure function of that value, so a test builds one with [`Env::from_vars`]
 //! and never touches the process environment. This folder is the only code
-//! in the crate that names `std::env` (`scripts/check-dependency-direction.sh`).
+//! in the crate that reads `std::env`: `clippy.toml` bans the reads, and this
+//! module's `#![expect]` allows them.
 //!
 //! An empty value reads as unset everywhere, as the `NO_COLOR` convention
 //! asks and as a shell's `VAR= cmd` intends.
+
+#![expect(
+    clippy::disallowed_methods,
+    reason = "env is the composition root environment reader: capture reads the process environment once, in main, and the rest of the crate takes that snapshot"
+)]
 
 mod app;
 mod kit;

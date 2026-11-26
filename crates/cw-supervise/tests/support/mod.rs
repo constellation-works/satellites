@@ -2,6 +2,10 @@
 //! processes a test learns of, so a failed assertion leaves none behind.
 
 #![allow(dead_code, reason = "each test binary uses part of it")]
+#![expect(
+    clippy::disallowed_methods,
+    reason = "support helper: reads a file a child wrote, to compare its bytes"
+)]
 
 use rustix::io::Errno;
 use rustix::process::{Pid, Signal, kill_process, test_kill_process};

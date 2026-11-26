@@ -4,6 +4,10 @@
 //! through `immutable=1`.
 
 #![cfg(unix)]
+#![expect(
+    clippy::disallowed_methods,
+    reason = "reader fixture: copies and chmods raw database and sidecar files that a reader must not write to"
+)]
 
 use cw_base::Kind;
 use cw_sqlite::{Db, Error, Step};

@@ -23,6 +23,10 @@ pub(crate) fn sidecar(path: &Path, suffix: &str) -> PathBuf {
 ///
 /// A path that is not valid UTF-8, as given or once resolved, is refused,
 /// because a reader hands SQLite a `file:` URI, which is text.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "resolve canonicalizes the database directory so the path SQLite opens names the real file"
+)]
 pub(crate) fn resolve(path: &Path) -> Result<PathBuf> {
     if path.to_str().is_none() {
         return Err(not_utf8(path));
@@ -90,6 +94,10 @@ pub(crate) fn create_if_missing(path: &Path) -> Result<()> {
 /// Whether the `-wal` beside the database at `path` exists and is not
 /// empty, so it may hold committed pages the main file does not. Looked at
 /// by name, without opening it.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "looks at the -wal by name, without opening it, to see whether it holds committed pages"
+)]
 pub(crate) fn wal_has_content(path: &Path) -> Result<bool> {
     let wal = sidecar(path, "-wal");
     match std::fs::symlink_metadata(&wal) {
@@ -107,6 +115,10 @@ pub(crate) fn wal_has_content(path: &Path) -> Result<bool> {
 /// exist, by name and without opening them. A strict read needs both, since
 /// SQLite would create a missing one when it opens the database in a
 /// directory this process can write.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "looks at the -wal and -shm by name, without opening them, so a strict read can refuse to create them"
+)]
 pub(crate) fn missing_sidecars(path: &Path) -> Result<Vec<PathBuf>> {
     let mut missing = Vec::new();
     for suffix in ["-wal", "-shm"] {
@@ -129,6 +141,10 @@ pub(crate) fn missing_sidecars(path: &Path) -> Result<Vec<PathBuf>> {
 /// Whether the database file at `path` has no bytes, so holds nothing yet
 /// (as a first writer's does until its first migration step commits). Looked
 /// at by name, without opening it.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "looks at the database by name, without opening it, to see whether it holds any bytes"
+)]
 pub(crate) fn is_empty_file(path: &Path) -> Result<bool> {
     std::fs::symlink_metadata(path)
         .map(|meta| meta.len() == 0)
@@ -177,6 +193,13 @@ fn writable(dir: &Path) -> io::Result<bool> {
 }
 
 #[cfg(not(unix))]
+#[cfg_attr(
+    not(unix),
+    expect(
+        clippy::disallowed_methods,
+        reason = "on native Windows the directory check reads the read only attribute by name"
+    )
+)]
 fn writable(dir: &Path) -> io::Result<bool> {
     Ok(!std::fs::metadata(dir)?.permissions().readonly())
 }

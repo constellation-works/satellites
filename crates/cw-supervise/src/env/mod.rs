@@ -19,6 +19,11 @@
 //!     .apply(&mut callback);
 //! ```
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "env Allow apply reads this process environment to build a child environment; a caller holding a snapshot uses apply_from"
+)]
+
 use std::ffi::{OsStr, OsString};
 use std::process::Command;
 

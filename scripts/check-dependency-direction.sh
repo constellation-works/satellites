@@ -1,7 +1,8 @@
 #!/bin/sh
 # check-dependency-direction.sh — the kit crates depend on each other only as
-# the table below allows, a crate names no module its row forbids, and a crate
-# with a TERMINAL row asks about terminal state only in that one folder.
+# the table below allows, cw-base names no std::fs, std::env or std::process
+# item, and a crate with a TERMINAL row asks about terminal state only in that
+# one folder.
 #
 # Usage: sh scripts/check-dependency-direction.sh [repository-root]
 # Exit status: 0 = every edge allowed, 1 = a violation, 2 = cannot run.
@@ -33,18 +34,14 @@ cw-mcp: cw-base cw-app
 # path (`std::fs::read`), a `use` of the module, or a grouped `use` on one
 # line or many (`use std::{io, fs};`). Line comments are not searched, so
 # documentation may still name what is forbidden.
-# cw-base does no I/O and reads no environment.
+#
+# Only cw-base stays here. It is the I/O-free foundation (STD-02 R5), a rule
+# over whole namespaces, which Clippy's per-path disallowed list cannot state.
+# Every other std::fs, std::env and std::process rule is Clippy's: clippy.toml
+# bans the items (STD-02 R6), and each adapter that may use one carries a
+# module-level #![expect] naming its reason. cw-app and cw-cli moved there.
 FORBIDDEN='
 cw-base: std::fs std::env std::process
-cw-app: std::env
-cw-cli: std::env
-'
-
-# crate: the folders under its src/ that the FORBIDDEN search skips, the one
-# place the crate may name what its row forbids (space-separated).
-# cw-app reads the process environment only in src/env/.
-EXEMPT='
-cw-app: env
 '
 
 # crate: the one folder under its src/ that may ask what a stream is
@@ -124,11 +121,6 @@ while IFS=$tab read -r crate dir deps; do
       *) fail "$crate depends on $dep; its row allows: ${allowed:-no kit crate}" ;;
     esac
   done
-  # The exempt folders, as `find` arguments that skip them.
-  set --
-  for skip in $(row "$EXEMPT" "$crate"); do
-    set -- "$@" -path "$dir/src/$skip" -prune -o
-  done
   for module in $(row "$FORBIDDEN" "$crate"); do
     parent=${module%%::*}
     leaf=${module##*::}
@@ -137,7 +129,7 @@ while IFS=$tab read -r crate dir deps; do
     grouped="(^|[^A-Za-z0-9_:])(::)?$parent ?:: ?\{.*[{,] ?$leaf$edge"
     # One line per offending statement, "<file>: <statement>"; a file name
     # may hold spaces, so it is read whole from each line of `find`.
-    hits=$(find "$dir/src" "$@" -name '*.rs' -print 2>/dev/null | LC_ALL=C sort |
+    hits=$(find "$dir/src" -name '*.rs' -print 2>/dev/null | LC_ALL=C sort |
       while IFS= read -r file; do
         statements "$file" | grep -E "$direct|$grouped" | sed 's/^ *//' |
           while IFS= read -r statement; do
