@@ -20,8 +20,10 @@ pub enum Error {
     /// group or other permission bit, or an I/O failure.
     #[error(transparent)]
     File(#[from] cw_fs::Error),
-    /// A reader was asked for a database that does not exist yet. A reader
-    /// never creates one.
+    /// A reader was asked for a database that does not exist yet, or that
+    /// holds nothing yet: version 0 with no table, index, view or trigger,
+    /// as a first writer's database is until its first migration step
+    /// commits. A reader never creates one.
     #[error("{} does not exist yet; nothing has been written to it", path.display())]
     Missing {
         /// The database file.
@@ -32,8 +34,10 @@ pub enum Error {
     /// It names no holder. SQLite's locks are byte-range locks on the
     /// database and its `-shm` that record no owner, and recording one beside
     /// them would be a write by every connection, readers included, which
-    /// readers here never make; the wait is SQLite's own busy handler, so
-    /// there is no point at which this crate could read a record either.
+    /// readers here never make.
+    ///
+    /// It comes once the call's lock wait has passed by the clock: see
+    /// [`crate::Db::lock_wait`].
     #[error("{} is locked by another connection; retry when it finishes", path.display())]
     Locked {
         /// The database file.

@@ -1,5 +1,6 @@
 //! Opening a read-write connection.
 
+use super::deadline::Deadline;
 use super::reader::open_resolved;
 use super::{create_if_missing, get_pragma, inspect, resolve, set_pragma};
 use crate::error::{Error, Result, is_busy};
@@ -8,7 +9,7 @@ use crate::migration::Step;
 use rusqlite::config::DbConfig;
 use rusqlite::{Connection, OpenFlags};
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// How often the switch to WAL is retried while another connection holds a
 /// new database.
@@ -19,12 +20,12 @@ const WAL_RETRY: Duration = Duration::from_millis(20);
 pub(crate) fn open(
     path: &Path,
     migrations: &[Step],
-    wait: Duration,
+    deadline: Deadline,
     secure_delete: bool,
 ) -> Result<Connection> {
     let real = resolve(path)?;
     if inspect(&real)? {
-        refuse_newer_before_writing(path, &real, migrations, wait)?;
+        refuse_newer_before_writing(path, &real, migrations, deadline)?;
     } else {
         create_if_missing(&real)?;
     }
@@ -36,7 +37,7 @@ pub(crate) fn open(
     )
     .map_err(|e| Error::sqlite("open", path, e))?;
     let configure = |e| Error::sqlite("configure", path, e);
-    set_pragma(&conn, "busy_timeout", millis(wait)).map_err(configure)?;
+    deadline.install(&mut conn).map_err(configure)?;
     let mut persist = 1;
     conn.file_control(
         rusqlite::DEFAULT_NAME,
@@ -53,7 +54,7 @@ pub(crate) fn open(
     migration::refuse_newer(&conn, path, migrations)?;
     conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false)
         .map_err(configure)?;
-    switch_to_wal(&conn, path, wait)?;
+    switch_to_wal(&conn, path, deadline)?;
     set_pragma(&conn, "synchronous", "FULL").map_err(configure)?;
     set_pragma(&conn, "foreign_keys", "ON").map_err(configure)?;
     if secure_delete {
@@ -72,17 +73,17 @@ fn refuse_newer_before_writing(
     path: &Path,
     real: &Path,
     migrations: &[Step],
-    wait: Duration,
+    deadline: Deadline,
 ) -> Result<()> {
-    open_resolved(path, real, migrations, wait).map(drop)
+    open_resolved(path, real, migrations, deadline).map(drop)
 }
 
-/// Put the database in WAL mode, which stays set in the file. SQLite does
-/// not call the busy handler for a journal-mode change, so while another
-/// connection holds a new database the switch is retried until `wait` runs
-/// out. A database that stays out of WAL is an error.
-fn switch_to_wal(conn: &Connection, path: &Path, wait: Duration) -> Result<()> {
-    let started = Instant::now();
+/// Put the database in WAL mode, which stays set in the file. SQLite may
+/// wait for the change through the busy handler, or return a busy result
+/// while another connection holds a new database; that is retried here.
+/// Both end at the same deadline. A database that stays out of WAL is an
+/// error.
+fn switch_to_wal(conn: &Connection, path: &Path, deadline: Deadline) -> Result<()> {
     loop {
         let mode = get_pragma::<String>(conn, "journal_mode", None).and_then(|mode| {
             if mode.eq_ignore_ascii_case("wal") {
@@ -99,15 +100,10 @@ fn switch_to_wal(conn: &Connection, path: &Path, wait: Duration) -> Result<()> {
                     mode,
                 });
             }
-            Err(e) if is_busy(&e) && started.elapsed() < wait => {
-                std::thread::sleep(WAL_RETRY.min(wait.saturating_sub(started.elapsed())));
+            Err(e) if is_busy(&e) && !deadline.passed() => {
+                std::thread::sleep(WAL_RETRY.min(deadline.left()));
             }
             Err(e) => return Err(Error::sqlite("switch to WAL", path, e)),
         }
     }
-}
-
-/// `wait` in whole milliseconds, as `busy_timeout` takes it.
-pub(crate) fn millis(wait: Duration) -> i32 {
-    i32::try_from(wait.as_millis()).unwrap_or(i32::MAX)
 }

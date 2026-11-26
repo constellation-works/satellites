@@ -1,5 +1,6 @@
 //! Opening a read-only connection.
 
+use super::deadline::Deadline;
 use super::files::{directory_writable, wal_has_content};
 use super::{get_pragma, inspect, resolve, set_pragma};
 use crate::error::{Error, Result, is_wal_unreadable};
@@ -9,7 +10,6 @@ use rusqlite::config::DbConfig;
 use rusqlite::{Connection, OpenFlags};
 use std::ops::Deref;
 use std::path::Path;
-use std::time::Duration;
 
 /// A read-only, `query_only` connection, from [`crate::Db::read`]. It
 /// dereferences to the [`Connection`].
@@ -68,10 +68,31 @@ impl Deref for Reader {
     }
 }
 
-/// A [`Reader`] on the database at `path`, refused when it is missing or a
-/// newer build migrated it.
-pub(crate) fn open(path: &Path, migrations: &[Step], wait: Duration) -> Result<Reader> {
-    open_resolved(path, &resolve(path)?, migrations, wait)
+/// A [`Reader`] on the database at `path`, refused when it is missing, holds
+/// nothing yet, or a newer build migrated it.
+///
+/// A first writer creates the file before its first migration step
+/// commits, so until then the file exists at version 0 with nothing in it.
+/// A reader that finds that, in its own snapshot, reports
+/// [`Error::Missing`], as for a file that is absent: nothing has been
+/// written to it. The check runs inside the reader's read transaction, so
+/// it sees the same snapshot as the version check and every later read.
+pub(crate) fn open(path: &Path, migrations: &[Step], deadline: Deadline) -> Result<Reader> {
+    let reader = open_resolved(path, &resolve(path)?, migrations, deadline)?;
+    if reader.version == 0
+        && holds_nothing(&reader.conn).map_err(|e| Error::sqlite("read the schema of", path, e))?
+    {
+        return Err(Error::Missing {
+            path: path.to_path_buf(),
+        });
+    }
+    Ok(reader)
+}
+
+/// Whether the database on `conn` has no table, index, view or trigger.
+fn holds_nothing(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.prepare_cached("SELECT NOT EXISTS (SELECT 1 FROM sqlite_schema)")?
+        .query_row([], |row| row.get(0))
 }
 
 /// [`open`] on `real`, the already resolved `path`.
@@ -100,14 +121,14 @@ pub(crate) fn open_resolved(
     path: &Path,
     real: &Path,
     migrations: &[Step],
-    wait: Duration,
+    deadline: Deadline,
 ) -> Result<Reader> {
     if !inspect(real)? {
         return Err(Error::Missing {
             path: path.to_path_buf(),
         });
     }
-    let open = |how| open_as(path, real, migrations, wait, how);
+    let open = |how| open_as(path, real, migrations, deadline, how);
     let fail = |attempt: Attempt| attempt.into_error(path);
     if directory_writable(real)? {
         return match open(Open::SharedIndex) {
@@ -159,7 +180,7 @@ fn open_as(
     path: &Path,
     real: &Path,
     migrations: &[Step],
-    wait: Duration,
+    deadline: Deadline,
     how: Open,
 ) -> Result<Reader, Attempt> {
     let immutable = how == Open::Immutable;
@@ -180,7 +201,7 @@ fn open_as(
         Open::Immutable => "?immutable=1",
     };
     let uri = format!("file:{}{query}", uri_path(real));
-    let conn = Connection::open_with_flags(
+    let mut conn = Connection::open_with_flags(
         uri,
         OpenFlags::SQLITE_OPEN_READ_ONLY
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
@@ -193,7 +214,7 @@ fn open_as(
     // write the pages anyway.
     conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)
         .map_err(sqlite("configure"))?;
-    set_pragma(&conn, "busy_timeout", super::writer::millis(wait)).map_err(sqlite("configure"))?;
+    deadline.install(&mut conn).map_err(sqlite("configure"))?;
     set_pragma(&conn, "query_only", "ON").map_err(sqlite("configure"))?;
     // One read transaction for the reader's life: the version checked below
     // is the version of every row the caller reads.

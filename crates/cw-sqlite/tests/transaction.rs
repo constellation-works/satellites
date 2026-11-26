@@ -1,8 +1,8 @@
 //! The write transaction through the public API, on temporary roots:
-//! commit, rollback, a second writer waiting out the lock, and a read during
-//! a write.
+//! commit, rollback, a second writer waiting out the lock, by the clock, and
+//! a read during a write.
 //!
-//! The lock test measures wall-clock time, so it has an explicit deadline
+//! The lock tests measure wall-clock time, so it has an explicit deadline
 //! and `.config/nextest.toml` runs this file's tests alone.
 
 use cw_base::Kind;
@@ -126,6 +126,29 @@ fn a_second_writer_waits_the_lock_wait_then_fails_locked() -> TestResult {
     assert!(
         waited < SHORT_WAIT + Duration::from_secs(3),
         "waited {waited:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_blocked_write_gives_up_within_twice_its_lock_wait_by_the_clock() -> TestResult {
+    const WAIT: Duration = Duration::from_millis(80);
+    let root = tempfile::tempdir()?;
+    let path = root.path().join("store.db");
+    insert(&Db::new(&path, MIGRATIONS), 1)?;
+    let child = hold_in_child(&path)?;
+    let started = Instant::now();
+    let result = Db::new(&path, MIGRATIONS)
+        .lock_wait(WAIT)
+        .write(|_| Ok::<_, Error>(()));
+    let waited = started.elapsed();
+    release(child)?;
+    let err = result.err().ok_or("the blocked writer did not wait")?;
+    assert!(matches!(err, Error::Locked { .. }), "{err:?}");
+    assert!(waited >= WAIT, "gave up after {waited:?}");
+    assert!(
+        waited < WAIT * 2,
+        "waited {waited:?} for a {WAIT:?} lock wait"
     );
     Ok(())
 }

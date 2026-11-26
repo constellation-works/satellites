@@ -11,6 +11,11 @@ use std::fmt;
 /// [`crate::Error::Migration`], and the version is not advanced; what it
 /// committed before ending it stays.
 ///
+/// A step must not change the connection's busy handler or `busy_timeout`
+/// either: the handler is the crate's, and it holds the lock wait of the
+/// call that runs the migration (see [`crate::Db::lock_wait`]). Replacing it
+/// would drop that deadline for the rest of the call.
+///
 /// ```
 /// use cw_sqlite::Step;
 ///
